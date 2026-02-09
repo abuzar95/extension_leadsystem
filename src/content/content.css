@@ -1,0 +1,7 @@
+/* Content script styles - ensures extension doesn't interfere with page */
+
+#prospect-extension-root {
+  all: initial;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+}
