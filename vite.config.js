@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
-import { copyFileSync, existsSync, mkdirSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
 
 export default defineConfig({
   plugins: [
@@ -15,6 +15,19 @@ export default defineConfig({
         if (existsSync(manifestSrc)) {
           copyFileSync(manifestSrc, manifestDest);
           console.log('✅ Manifest copied');
+        }
+        // Copy index.html for iframe UI (loads main.js so it runs without page CSP blocking)
+        const indexSrc = resolve(__dirname, 'src/index.html');
+        const indexDest = resolve(__dirname, 'dist/index.html');
+        if (existsSync(indexSrc)) {
+          let html = readFileSync(indexSrc, 'utf-8');
+          html = html.replace(/src="\/main\.jsx"/, 'src="main.js"');
+          // Ensure Tailwind CSS loads in the iframe (extension doesn't get CSS from main.js import)
+          if (!html.includes('assets/main.css')) {
+            html = html.replace('</head>', '<link rel="stylesheet" href="assets/main.css">\n</head>');
+          }
+          writeFileSync(indexDest, html);
+          console.log('✅ index.html copied');
         }
       },
     },

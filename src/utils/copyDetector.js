@@ -1,8 +1,8 @@
 // Smart field detection for copied text
 
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const phoneRegex = /^[\+]?[(]?[0-9]{1,4}[)]?[-\s\.]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{1,9}$/;
 const urlRegex = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+const linkedInUrlRegex = /linkedin\.com\/in\//i;
 const companyKeywords = ['inc', 'ltd', 'llc', 'corp', 'corporation', 'company', 'co', 'group', 'tech', 'solutions', 'systems', 'services'];
 
 export const detectField = (text) => {
@@ -17,10 +17,9 @@ export const detectField = (text) => {
     return 'email';
   }
 
-  // Phone detection
-  const cleanPhone = trimmed.replace(/[\s\-\(\)]/g, '');
-  if (phoneRegex.test(cleanPhone) || /^\d{10,15}$/.test(cleanPhone)) {
-    return 'number';
+  // LinkedIn URL detection (before generic URL)
+  if (linkedInUrlRegex.test(trimmed) || trimmed.includes('linkedin.com/in/')) {
+    return 'linkedin_url';
   }
 
   // URL/Website detection
@@ -55,12 +54,15 @@ export const getFieldLabel = (field) => {
   const labels = {
     name: 'Name',
     email: 'Email',
-    number: 'Phone',
+    job_title: 'Designation',
     company_name: 'Company Name',
     website_link: 'Website',
+    linkedin_url: 'LinkedIn URL',
     category: 'Category',
     sources: 'Source',
     status: 'Status',
+    intent: 'Intent',
+    intent_date: 'Intent Date',
     about_prospect: 'About'
   };
   return labels[field] || field;
@@ -70,11 +72,14 @@ export const getAllFields = () => {
   return [
     { value: 'name', label: 'Name', icon: '👤' },
     { value: 'email', label: 'Email', icon: '✉️' },
-    { value: 'number', label: 'Phone', icon: '📞' },
+    { value: 'job_title', label: 'Designation', icon: '💼' },
     { value: 'company_name', label: 'Company', icon: '🏢' },
     { value: 'website_link', label: 'Website', icon: '🌐' },
+    { value: 'linkedin_url', label: 'LinkedIn URL', icon: '🔗' },
     { value: 'category', label: 'Category', icon: '📂' },
     { value: 'sources', label: 'Source', icon: '🔗' },
+    { value: 'intent', label: 'Intent', icon: '🎯' },
+    { value: 'intent_date', label: 'Intent Date', icon: '📅' },
     { value: 'status', label: 'Status', icon: '📊' },
     { value: 'about_prospect', label: 'About', icon: '📄' }
   ];

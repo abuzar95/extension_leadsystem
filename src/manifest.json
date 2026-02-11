@@ -30,7 +30,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["content.js", "main.js", "assets/*"],
+      "resources": ["content.js", "main.js", "index.html", "assets/*"],
       "matches": ["<all_urls>"]
     }
   ]
