@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ProspectProvider, useProspect } from './context/ProspectContext';
 import OverlayPanel from './components/OverlayPanel';
 import CopyPopup from './components/CopyPopup';
+import LoginScreen from './components/LoginScreen';
 import './styles/main.css';
 
 function ProspectPasteListener() {
@@ -116,6 +117,44 @@ function App() {
 
   return (
     <ProspectProvider>
+      <AppContent
+        showOverlay={showOverlay}
+        handleCaptureSelection={handleCaptureSelection}
+        showCopyPopup={showCopyPopup}
+        copiedText={copiedText}
+        copyPosition={copyPosition}
+        setShowCopyPopup={setShowCopyPopup}
+        setCopiedText={setCopiedText}
+      />
+    </ProspectProvider>
+  );
+}
+
+function AppContent({
+  showOverlay,
+  handleCaptureSelection,
+  showCopyPopup,
+  copiedText,
+  copyPosition,
+  setShowCopyPopup,
+  setCopiedText,
+}) {
+  const { authUser, authLoading, login } = useProspect();
+
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center h-full bg-slate-100">
+        <div className="text-sm text-slate-500">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return <LoginScreen onLogin={login} />;
+  }
+
+  return (
+    <>
       <ProspectPasteListener />
       {showOverlay && <OverlayPanel onRequestCaptureSelection={handleCaptureSelection} />}
       {showCopyPopup && copiedText && (
@@ -132,7 +171,7 @@ function App() {
           }}
         />
       )}
-    </ProspectProvider>
+    </>
   );
 }
 

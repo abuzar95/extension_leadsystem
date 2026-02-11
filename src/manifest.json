@@ -13,6 +13,7 @@
   ],
   "host_permissions": [
     "http://localhost:3001/*",
+    "https://backend-five-sable-52.vercel.app/*",
     "https://*/*"
   ],
   "background": {

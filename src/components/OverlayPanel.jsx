@@ -3,10 +3,10 @@ import { useProspect } from '../context/ProspectContext';
 import ProspectForm from './ProspectForm';
 import { UserPlus, MousePointer2, PanelLeftClose, PanelLeft, RefreshCw, List, ArrowLeft, Loader2 } from './icons';
 
-const API_URL = 'http://localhost:3001/api';
+import { API_URL } from '../config.js';
 
 const OverlayPanel = ({ onRequestCaptureSelection }) => {
-  const { activeProspect, isCollapsed, setIsCollapsed, startNewProspect, clearProspect, userId, reloadDraftFromStorage, loadProspect } = useProspect();
+  const { activeProspect, isCollapsed, setIsCollapsed, startNewProspect, clearProspect, userId, reloadDraftFromStorage, loadProspect, authUser, logout } = useProspect();
   const [viewMode, setViewMode] = useState('home'); // 'home' | 'prospects'
   const [fromProspectsList, setFromProspectsList] = useState(false);
   const [prospects, setProspects] = useState([]);
@@ -255,11 +255,19 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
 
             {/* Footer */}
             <div className="flex-shrink-0 px-4 py-3 border-t border-slate-200 bg-white">
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="font-medium">User ID</span>
-                <code className="font-mono text-slate-600 truncate max-w-[200px]">
-                  {userId ? `${userId.substring(0, 18)}…` : '—'}
-                </code>
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col text-xs text-slate-500 truncate max-w-[280px]">
+                  <span className="font-medium text-slate-700 truncate">{authUser?.name || authUser?.email || '—'}</span>
+                  <span className="text-[11px] text-slate-400">{authUser?.role || ''}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={logout}
+                  title="Sign out"
+                  className="text-xs font-medium text-slate-500 hover:text-red-600 transition-colors px-2 py-1 rounded hover:bg-red-50"
+                >
+                  Sign out
+                </button>
               </div>
             </div>
           </div>

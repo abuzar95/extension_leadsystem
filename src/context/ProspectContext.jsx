@@ -2,9 +2,9 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const ProspectContext = createContext();
 
-const DEFAULT_ADMIN_USER_ID = 'aef5e700-1401-4e3f-bd54-5be9d645df0f';
-const API_URL = 'http://localhost:3001/api';
+import { API_URL } from '../config.js';
 const DRAFT_STORAGE_KEY = 'prospectDraft';
+const AUTH_STORAGE_KEY = 'authUser';
 
 const emptyProspect = () => ({
   id: Date.now().toString(),
@@ -26,13 +26,16 @@ const emptyProspect = () => ({
 
 export const ProspectProvider = ({ children }) => {
   const [activeProspect, setActiveProspect] = useState(null);
+  const [authUser, setAuthUser] = useState(null); // { id, email, name, role }
+  const [authLoading, setAuthLoading] = useState(true);
   const [userId, setUserId] = useState(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
 
+  // Load auth user and draft on mount
   useEffect(() => {
-    loadUserId();
+    loadAuth();
   }, []);
 
   useEffect(() => {
@@ -44,13 +47,13 @@ export const ProspectProvider = ({ children }) => {
     }
   }, [activeProspect, draftLoaded]);
 
-  const loadUserId = async () => {
+  const loadAuth = async () => {
     try {
-      const result = await chrome.storage.local.get(['userId', DRAFT_STORAGE_KEY]);
-      const id = result.userId || DEFAULT_ADMIN_USER_ID;
-      setUserId(id);
-      if (!result.userId) {
-        await chrome.storage.local.set({ userId: id });
+      const result = await chrome.storage.local.get([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY]);
+      const stored = result[AUTH_STORAGE_KEY];
+      if (stored && typeof stored === 'object' && stored.id) {
+        setAuthUser(stored);
+        setUserId(stored.id);
       }
       if (result[DRAFT_STORAGE_KEY] && typeof result[DRAFT_STORAGE_KEY] === 'object') {
         const draft = result[DRAFT_STORAGE_KEY];
@@ -61,10 +64,24 @@ export const ProspectProvider = ({ children }) => {
       }
       setDraftLoaded(true);
     } catch (error) {
-      console.error('Error loading user ID:', error);
-      setUserId(DEFAULT_ADMIN_USER_ID);
+      console.error('Error loading auth:', error);
       setDraftLoaded(true);
+    } finally {
+      setAuthLoading(false);
     }
+  };
+
+  const login = async (user) => {
+    setAuthUser(user);
+    setUserId(user.id);
+    await chrome.storage.local.set({ [AUTH_STORAGE_KEY]: user }).catch(() => {});
+  };
+
+  const logout = async () => {
+    setAuthUser(null);
+    setUserId(null);
+    setActiveProspect(null);
+    await chrome.storage.local.remove([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY]).catch(() => {});
   };
 
   const startNewProspect = () => {
@@ -159,9 +176,13 @@ export const ProspectProvider = ({ children }) => {
 
   const value = {
     activeProspect,
+    authUser,
+    authLoading,
     userId,
     isCollapsed,
     setIsCollapsed,
+    login,
+    logout,
     startNewProspect,
     updateProspectField,
     clearProspect,
