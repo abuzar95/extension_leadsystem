@@ -130,16 +130,31 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
     Both: 'bg-violet-100 text-violet-700',
   };
 
-  // Validation: invite sent + profile selected required
-  const canSave = linkedinConnection === 'invite' && !!linkedinProfileId;
+  // Determine current phase based on prospect status
+  const isLNCPhase = prospect.status === 'LNC' || prospect.status === 'B_LNC';
+  const isAssignedPhase = prospect.status === 'data_refined';
+
+  // Validation depends on which phase we are in
+  const canSave = isLNCPhase
+    ? linkedinConnection === 'connected' && !!linkedinProfileId   // LNC → LC requires "connected"
+    : linkedinConnection === 'invite' && !!linkedinProfileId;     // Assigned → LNC requires "invite"
+
+  // Compute the target status for display
+  const getTargetStatus = () => {
+    if (isLNCPhase) {
+      // LNC/B_LNC → LC/B_LC when connected
+      return prospect.email ? 'B_LC' : 'LC';
+    }
+    // data_refined → LNC/B_LNC when invite sent
+    return prospect.email ? 'B_LNC' : 'LNC';
+  };
 
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
     setSaveMsg(null);
     try {
-      // Auto-determine status: B_LNC if prospect has email, LNC otherwise
-      const newStatus = prospect.email ? 'B_LNC' : 'LNC';
+      const newStatus = getTargetStatus();
 
       const body = {
         lead_score: leadScore === '' ? null : Number(leadScore),
@@ -322,8 +337,14 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
         {!canSave && (
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 space-y-1">
             <p className="text-xs font-semibold text-amber-700">Required to save:</p>
-            {linkedinConnection !== 'invite' && (
-              <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Invite"</p>
+            {isLNCPhase ? (
+              linkedinConnection !== 'connected' && (
+                <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Connected"</p>
+              )
+            ) : (
+              linkedinConnection !== 'invite' && (
+                <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Invite"</p>
+              )
             )}
             {!linkedinProfileId && (
               <p className="text-xs text-amber-600">• Select a LinkedIn Profile</p>
@@ -336,8 +357,8 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
           <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-center">
             <p className="text-xs text-slate-500">
               Status will be set to{' '}
-              <span className={`font-semibold ${prospect.email ? 'text-red-600' : 'text-red-700'}`}>
-                {prospect.email ? 'B_LNC' : 'LNC'}
+              <span className={`font-semibold ${isLNCPhase ? 'text-emerald-600' : 'text-red-600'}`}>
+                {getTargetStatus()}
               </span>
               {prospect.email ? ' (email present)' : ' (no email)'}
             </p>
@@ -672,7 +693,7 @@ const LHTabsView = () => {
   // Filter prospects per tab
   const assignedProspects = prospects.filter((p) => p.status === 'data_refined');
   const lncProspects = prospects.filter((p) => p.status === 'LNC' || p.status === 'B_LNC');
-  const lcProspects = prospects.filter((p) => p.status === 'LC' || p.status === 'B_LC');
+  const lcProspects = prospects.filter((p) => (p.status === 'LC' || p.status === 'B_LC') && !p.last_contacted_at);
 
   // Stats for dashboard
   const totalProspects = prospects.length;
