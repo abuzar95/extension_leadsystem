@@ -78,6 +78,328 @@ const ProspectList = ({ prospects, loading, error, emptyText, onSelect }) => {
   );
 };
 
+// ── Prospect detail card (read-only) ────────────────────────────────
+const DetailRow = ({ label, children }) => {
+  if (!children && children !== 0) return null;
+  return (
+    <div className="flex flex-col gap-0.5 py-2 border-b border-slate-100 last:border-b-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="text-sm text-slate-800 break-words">{children}</span>
+    </div>
+  );
+};
+
+const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
+  const { authUser } = useProspect();
+  const [leadScore, setLeadScore] = useState(prospect?.lead_score ?? '');
+  const [linkedinConnection, setLinkedinConnection] = useState(prospect?.linkedin_connection || 'none');
+  const [linkedinProfileId, setLinkedinProfileId] = useState(prospect?.linkedin_profile_id || '');
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null);
+
+  // Reset fields when prospect changes — default profile to user's if prospect has none
+  useEffect(() => {
+    if (prospect) {
+      setLeadScore(prospect.lead_score ?? '');
+      setLinkedinConnection(prospect.linkedin_connection || 'none');
+      setLinkedinProfileId(
+        prospect.linkedin_profile_id || authUser?.linkedin_profile_id || ''
+      );
+      setSaveMsg(null);
+    }
+  }, [prospect, authUser]);
+
+  if (!prospect) return null;
+
+  const STATUS_COLORS = {
+    new: 'bg-blue-100 text-blue-700',
+    data_refined: 'bg-amber-100 text-amber-700',
+    use_in_campaign: 'bg-indigo-100 text-indigo-700',
+    pitch: 'bg-violet-100 text-violet-700',
+    LNC: 'bg-red-100 text-red-700',
+    B_LNC: 'bg-red-50 text-red-600',
+    LC: 'bg-emerald-100 text-emerald-700',
+    B_LC: 'bg-emerald-50 text-emerald-600',
+    COMMUNICATION: 'bg-purple-100 text-purple-700',
+    TRASH: 'bg-slate-200 text-slate-600',
+  };
+
+  const CATEGORY_COLORS = {
+    Individual: 'bg-sky-100 text-sky-700',
+    Business: 'bg-amber-100 text-amber-700',
+    Both: 'bg-violet-100 text-violet-700',
+  };
+
+  // Validation: invite sent + profile selected required
+  const canSave = linkedinConnection === 'invite' && !!linkedinProfileId;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      // Auto-determine status: B_LNC if prospect has email, LNC otherwise
+      const newStatus = prospect.email ? 'B_LNC' : 'LNC';
+
+      const body = {
+        lead_score: leadScore === '' ? null : Number(leadScore),
+        linkedin_connection: linkedinConnection,
+        linkedin_profile_id: linkedinProfileId || null,
+        status: newStatus,
+      };
+      const res = await fetch(`${API_URL}/prospects/${prospect.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      setSaveMsg({ type: 'success', text: `Saved — status set to ${newStatus}` });
+      if (typeof onUpdated === 'function') onUpdated();
+    } catch (err) {
+      setSaveMsg({ type: 'error', text: err.message || 'Error saving' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Use the logged-in LH user's LinkedIn profile as the available option
+  const userProfile = authUser?.linkedin_profile || null;
+  // If prospect already has a profile assigned, show that; otherwise show the user's profile
+  const availableProfile = prospect.linkedin_profile || userProfile;
+
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+      >
+        <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+        {backLabel || 'Back'}
+      </button>
+
+      {/* Header card */}
+      <div className="rounded-xl bg-white border border-slate-200/80 p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <h3 className="text-lg font-bold text-slate-800 truncate">{prospect.name || '—'}</h3>
+            {prospect.job_title && <p className="text-sm text-slate-500">{prospect.job_title}</p>}
+          </div>
+          {prospect.status && (
+            <span className={`shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-full ${STATUS_COLORS[prospect.status] || 'bg-slate-100 text-slate-600'}`}>
+              {String(prospect.status).replace('_', ' ')}
+            </span>
+          )}
+        </div>
+
+        {/* Badges row */}
+        <div className="flex flex-wrap gap-1.5 mb-1">
+          {prospect.category && (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+              {String(prospect.category).replace('_', '-')}
+            </span>
+          )}
+          {prospect.intent_category && (
+            <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${CATEGORY_COLORS[prospect.intent_category] || 'bg-slate-100 text-slate-600'}`}>
+              {prospect.intent_category}
+            </span>
+          )}
+          {prospect.sources && (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+              {prospect.sources}
+            </span>
+          )}
+          {prospect.priority && (
+            <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+              prospect.priority === 'high' ? 'bg-red-100 text-red-700' :
+              prospect.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
+              'bg-slate-100 text-slate-600'
+            }`}>
+              {prospect.priority} priority
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Contact & company info */}
+      <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Contact & Company</h4>
+        <DetailRow label="Email">
+          {prospect.email && (
+            <a href={`mailto:${prospect.email}`} className="text-primary-600 hover:underline">{prospect.email}</a>
+          )}
+        </DetailRow>
+        <DetailRow label="Company">{prospect.company_name}</DetailRow>
+        <DetailRow label="Company Size">{prospect.company_size}</DetailRow>
+        <DetailRow label="Location">{prospect.location}</DetailRow>
+        <DetailRow label="Website">
+          {prospect.website_link && (
+            <a href={prospect.website_link} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">{prospect.website_link}</a>
+          )}
+        </DetailRow>
+        <DetailRow label="LinkedIn">
+          {prospect.linkedin_url && (
+            <a href={prospect.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">{prospect.linkedin_url}</a>
+          )}
+        </DetailRow>
+      </div>
+
+      {/* Intent info */}
+      <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Intent</h4>
+        <DetailRow label="Intent Category">{prospect.intent_category}</DetailRow>
+        <DetailRow label="Intent Skills">
+          {prospect.intent_skills && prospect.intent_skills.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-0.5">
+              {prospect.intent_skills.map((s, i) => (
+                <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 font-medium">{s}</span>
+              ))}
+            </div>
+          )}
+        </DetailRow>
+        <DetailRow label="Intent Proof Link">
+          {prospect.intent_proof_link && (
+            <a href={prospect.intent_proof_link} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">{prospect.intent_proof_link}</a>
+          )}
+        </DetailRow>
+        <DetailRow label="Intent Date">
+          {prospect.intent_date && new Date(prospect.intent_date).toLocaleDateString()}
+        </DetailRow>
+      </div>
+
+      {/* Editable fields for LH */}
+      <div className="rounded-xl bg-white border border-primary-200 p-4 shadow-sm space-y-4">
+        <h4 className="text-xs font-semibold text-primary-600 uppercase tracking-wide">Update</h4>
+
+        {/* Lead Score */}
+        <div className="space-y-1">
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Lead Score</label>
+          <input
+            type="number"
+            min="0"
+            max="100"
+            value={leadScore}
+            onChange={(e) => setLeadScore(e.target.value)}
+            placeholder="0 – 100"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+          />
+        </div>
+
+        {/* LinkedIn Connection */}
+        <div className="space-y-1">
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">LinkedIn Connection</label>
+          <select
+            value={linkedinConnection}
+            onChange={(e) => setLinkedinConnection(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+          >
+            <option value="none">None</option>
+            <option value="invite">Invite</option>
+            <option value="connected">Connected</option>
+          </select>
+        </div>
+
+        {/* LinkedIn Profile (from logged-in LH user) */}
+        <div className="space-y-1">
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">LinkedIn Profile</label>
+          {availableProfile ? (
+            <select
+              value={linkedinProfileId}
+              onChange={(e) => setLinkedinProfileId(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            >
+              <option value="">— Select Profile —</option>
+              <option value={availableProfile.id}>
+                {availableProfile.name}{availableProfile.niche ? ` (${availableProfile.niche})` : ''}
+              </option>
+            </select>
+          ) : (
+            <p className="text-xs text-amber-600 py-1.5">No LinkedIn profile linked to your account. Contact admin.</p>
+          )}
+        </div>
+
+        {/* Validation hints */}
+        {!canSave && (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 space-y-1">
+            <p className="text-xs font-semibold text-amber-700">Required to save:</p>
+            {linkedinConnection !== 'invite' && (
+              <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Invite"</p>
+            )}
+            {!linkedinProfileId && (
+              <p className="text-xs text-amber-600">• Select a LinkedIn Profile</p>
+            )}
+          </div>
+        )}
+
+        {/* Status preview */}
+        {canSave && (
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-center">
+            <p className="text-xs text-slate-500">
+              Status will be set to{' '}
+              <span className={`font-semibold ${prospect.email ? 'text-red-600' : 'text-red-700'}`}>
+                {prospect.email ? 'B_LNC' : 'LNC'}
+              </span>
+              {prospect.email ? ' (email present)' : ' (no email)'}
+            </p>
+          </div>
+        )}
+
+        {/* Save button */}
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving || !canSave}
+          title={!canSave ? 'Set connection to Invite and select a LinkedIn Profile to save' : ''}
+          className="w-full rounded-lg bg-primary-600 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
+        >
+          {saving ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" strokeWidth={2} />
+              Saving…
+            </>
+          ) : (
+            'Save Changes'
+          )}
+        </button>
+
+        {saveMsg && (
+          <p className={`text-xs font-medium text-center ${saveMsg.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>
+            {saveMsg.text}
+          </p>
+        )}
+      </div>
+
+      {/* About */}
+      {prospect.about_prospect && (
+        <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">About</h4>
+          <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{prospect.about_prospect}</p>
+        </div>
+      )}
+
+      {/* Pitch info (if any) */}
+      {(prospect.pitch_description || prospect.pitched_source || prospect.pitch_date) && (
+        <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Pitch</h4>
+          <DetailRow label="Pitch Description">{prospect.pitch_description}</DetailRow>
+          <DetailRow label="Pitched Source">{prospect.pitched_source}</DetailRow>
+          <DetailRow label="Pitch Date">{prospect.pitch_date && new Date(prospect.pitch_date).toLocaleDateString()}</DetailRow>
+          <DetailRow label="Pitch Response">{prospect.pitch_response}</DetailRow>
+        </div>
+      )}
+
+      {/* Meta */}
+      <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Details</h4>
+        <DetailRow label="Created">{prospect.created_at && new Date(prospect.created_at).toLocaleDateString()}</DetailRow>
+        <DetailRow label="Last Contacted">{prospect.last_contacted_at && new Date(prospect.last_contacted_at).toLocaleDateString()}</DetailRow>
+        <DetailRow label="Next Follow-up">{prospect.next_follow_up_date && new Date(prospect.next_follow_up_date).toLocaleDateString()}</DetailRow>
+        <DetailRow label="Campaign">{prospect.campaign_name}</DetailRow>
+      </div>
+    </div>
+  );
+};
+
 // ── DC_R Tabs component ─────────────────────────────────────────────
 const DC_R_TABS = [
   { key: 'new', label: 'New' },
@@ -359,24 +681,15 @@ const LHTabsView = () => {
     return acc;
   }, {});
 
-  // If editing from a tab
+  // If viewing a prospect detail from a tab
   if (activeProspect && editingFromTab) {
     return (
-      <div className="space-y-4">
-        <button
-          type="button"
-          onClick={handleBackToTab}
-          className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
-        >
-          <ArrowLeft className="w-4 h-4" strokeWidth={2} />
-          Back to {LH_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}
-        </button>
-        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-sm font-medium text-slate-700">Editing Prospect</span>
-        </div>
-        <ProspectForm />
-      </div>
+      <ProspectDetailCard
+        prospect={activeProspect}
+        onBack={handleBackToTab}
+        backLabel={`Back to ${LH_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}`}
+        onUpdated={fetchLHProspects}
+      />
     );
   }
 
