@@ -37,7 +37,7 @@ export const FieldIcons = {
   category: FolderOpen,
   sources: Link2,
   status: BarChart3,
-  intent: Target,
+  intent_skills: Target,
   intent_date: Calendar,
   about_prospect: FileText,
 };

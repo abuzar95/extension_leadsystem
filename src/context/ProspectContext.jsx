@@ -17,9 +17,12 @@ const emptyProspect = () => ({
   linkedin_connection: 'none',
   category: null,
   sources: null,
-  intent: null,
+  intent_skills: [],
+  intent_category: null,
+  intent_proof_link: null,
   intent_date: null,
   status: 'new',
+  lh_user_id: null,
   about_prospect: null,
   created_at: new Date().toISOString()
 });

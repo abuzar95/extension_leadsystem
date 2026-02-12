@@ -61,7 +61,7 @@ export const getFieldLabel = (field) => {
     category: 'Category',
     sources: 'Source',
     status: 'Status',
-    intent: 'Intent',
+    intent_skills: 'Intent Skills',
     intent_date: 'Intent Date',
     about_prospect: 'About'
   };
@@ -78,7 +78,7 @@ export const getAllFields = () => {
     { value: 'linkedin_url', label: 'LinkedIn URL', icon: '🔗' },
     { value: 'category', label: 'Category', icon: '📂' },
     { value: 'sources', label: 'Source', icon: '🔗' },
-    { value: 'intent', label: 'Intent', icon: '🎯' },
+    { value: 'intent_skills', label: 'Intent Skills', icon: '🎯' },
     { value: 'intent_date', label: 'Intent Date', icon: '📅' },
     { value: 'status', label: 'Status', icon: '📊' },
     { value: 'about_prospect', label: 'About', icon: '📄' }

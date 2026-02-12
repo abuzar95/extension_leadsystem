@@ -1,12 +1,529 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useProspect } from '../context/ProspectContext';
 import ProspectForm from './ProspectForm';
 import { UserPlus, MousePointer2, PanelLeftClose, PanelLeft, RefreshCw, List, ArrowLeft, Loader2 } from './icons';
 
 import { API_URL } from '../config.js';
 
-const OverlayPanel = ({ onRequestCaptureSelection }) => {
-  const { activeProspect, isCollapsed, setIsCollapsed, startNewProspect, clearProspect, userId, reloadDraftFromStorage, loadProspect, authUser, logout } = useProspect();
+// ── Shared prospect card ────────────────────────────────────────────
+const ProspectCard = ({ prospect, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="w-full text-left rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm hover:border-primary-300 hover:shadow-md transition-colors cursor-pointer"
+  >
+    <div className="font-semibold text-slate-800 truncate">
+      {prospect.name || '—'}
+    </div>
+    {prospect.email && (
+      <a
+        href={`mailto:${prospect.email}`}
+        onClick={(e) => e.stopPropagation()}
+        className="text-xs text-primary-600 hover:underline truncate block"
+      >
+        {prospect.email}
+      </a>
+    )}
+    {prospect.company_name && (
+      <p className="text-xs text-slate-500 mt-1 truncate">{prospect.company_name}</p>
+    )}
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {prospect.category && (
+        <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+          {String(prospect.category).replace('_', '-')}
+        </span>
+      )}
+      {prospect.sources && (
+        <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+          {prospect.sources}
+        </span>
+      )}
+      {prospect.status && (
+        <span className="text-[10px] px-2 py-0.5 rounded bg-primary-100 text-primary-700">
+          {String(prospect.status).replace('_', ' ')}
+        </span>
+      )}
+    </div>
+    {prospect.linkedin_url && (
+      <a
+        href={prospect.linkedin_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="text-xs text-primary-600 hover:underline mt-2 inline-block truncate max-w-full"
+      >
+        LinkedIn →
+      </a>
+    )}
+  </button>
+);
+
+// ── Prospect list (reusable) ────────────────────────────────────────
+const ProspectList = ({ prospects, loading, error, emptyText, onSelect }) => {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-500" strokeWidth={2} />
+      </div>
+    );
+  }
+  if (error) return <p className="text-sm text-red-600 py-4">{error}</p>;
+  if (prospects.length === 0) return <p className="text-sm text-slate-500 py-4">{emptyText}</p>;
+  return (
+    <div className="space-y-3">
+      {prospects.map((p) => (
+        <ProspectCard key={p.id} prospect={p} onClick={() => onSelect(p)} />
+      ))}
+    </div>
+  );
+};
+
+// ── DC_R Tabs component ─────────────────────────────────────────────
+const DC_R_TABS = [
+  { key: 'new', label: 'New' },
+  { key: 'redefine', label: 'Redefine' },
+  { key: 'assigned', label: 'Assigned' },
+];
+
+const DCRTabsView = ({ onRequestCaptureSelection }) => {
+  const { activeProspect, startNewProspect, clearProspect, loadProspect, userId } = useProspect();
+  const [activeTab, setActiveTab] = useState('new');
+  const [editingFromTab, setEditingFromTab] = useState(null); // which tab we came from
+  const [prospects, setProspects] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const wasEditingRef = React.useRef(false); // tracks if user was in form (not cleared manually)
+
+  const fetchUserProspects = useCallback(async () => {
+    if (!userId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/prospects/user/${userId}`);
+      if (!res.ok) throw new Error('Failed to load prospects');
+      const data = await res.json();
+      setProspects(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || 'Error loading prospects');
+      setProspects([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  // Fetch prospects when switching to redefine/assigned, or when userId changes
+  useEffect(() => {
+    if (activeTab === 'redefine' || activeTab === 'assigned') {
+      fetchUserProspects();
+    }
+  }, [activeTab, fetchUserProspects]);
+
+  // After a successful save (activeProspect → null while wasEditingRef is true),
+  // refresh the list and switch to the Redefine tab.
+  useEffect(() => {
+    if (activeProspect) {
+      // User is editing — mark that a form session is active
+      wasEditingRef.current = true;
+    } else if (wasEditingRef.current) {
+      // activeProspect just went to null AND we were editing (i.e. a save happened)
+      wasEditingRef.current = false;
+      setEditingFromTab(null);
+      setActiveTab('redefine');
+      fetchUserProspects();
+    }
+  }, [activeProspect, fetchUserProspects]);
+
+  const handleSelectProspect = (p, fromTab) => {
+    loadProspect(p);
+    setEditingFromTab(fromTab);
+  };
+
+  const handleBackToTab = () => {
+    // Manual back — disable the save-detection so it doesn't jump to redefine
+    wasEditingRef.current = false;
+    clearProspect();
+    setEditingFromTab(null);
+  };
+
+  // Filter prospects per tab
+  const redefineProspects = prospects.filter((p) => p.status === 'data_refined');
+  const assignedProspects = prospects.filter((p) => p.status !== 'data_refined');
+
+  // If editing a prospect loaded from a tab list, show the form with a back button
+  if (activeProspect && editingFromTab) {
+    return (
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={handleBackToTab}
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+        >
+          <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+          Back to {DC_R_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}
+        </button>
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-sm font-medium text-slate-700">Editing Prospect</span>
+        </div>
+        <ProspectForm />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Tab bar */}
+      <div className="flex rounded-lg bg-white border border-slate-200 p-1 shadow-sm">
+        {DC_R_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => {
+              wasEditingRef.current = false;
+              clearProspect();
+              setEditingFromTab(null);
+              setActiveTab(tab.key);
+            }}
+            className={`flex-1 py-2 px-3 rounded-md text-sm font-semibold transition-colors ${
+              activeTab === tab.key
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === 'new' && (
+        <>
+          {!activeProspect ? (
+            <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm">
+              <h3 className="text-base font-bold text-slate-800 mb-1.5">
+                Ready to capture prospects
+              </h3>
+              <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+                Start a new prospect session. Select text and copy (Ctrl+C), or capture the
+                current selection below.
+              </p>
+              <div className="space-y-3">
+                {typeof onRequestCaptureSelection === 'function' && (
+                  <button
+                    type="button"
+                    onClick={onRequestCaptureSelection}
+                    className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
+                  >
+                    <MousePointer2 className="w-4 h-4" strokeWidth={2} />
+                    Capture selection
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingFromTab(null);
+                    startNewProspect();
+                  }}
+                  className="w-full rounded-lg bg-primary-600 py-3 px-4 text-sm font-semibold text-white hover:bg-primary-700 transition-colors inline-flex items-center justify-center gap-2"
+                >
+                  <UserPlus className="w-4 h-4" strokeWidth={2.5} />
+                  Start New Prospect
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-sm font-medium text-slate-700">Active Prospect Session</span>
+              </div>
+              <ProspectForm />
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === 'redefine' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">Data Refined ({redefineProspects.length})</h3>
+            <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList
+            prospects={redefineProspects}
+            loading={loading}
+            error={error}
+            emptyText="No prospects with 'Data Refined' status."
+            onSelect={(p) => handleSelectProspect(p, 'redefine')}
+          />
+        </div>
+      )}
+
+      {activeTab === 'assigned' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">Assigned to you ({assignedProspects.length})</h3>
+            <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList
+            prospects={assignedProspects}
+            loading={loading}
+            error={error}
+            emptyText="No prospects assigned to you yet."
+            onSelect={(p) => handleSelectProspect(p, 'assigned')}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── LH Tabs component ───────────────────────────────────────────────
+const LH_TABS = [
+  { key: 'assigned', label: 'Assigned' },
+  { key: 'lnc', label: 'LNC' },
+  { key: 'lc', label: 'LC' },
+  { key: 'task', label: 'Task' },
+  { key: 'dashboard', label: 'Dashboard' },
+];
+
+const LHTabsView = () => {
+  const { activeProspect, clearProspect, loadProspect, userId } = useProspect();
+  const [activeTab, setActiveTab] = useState('assigned');
+  const [editingFromTab, setEditingFromTab] = useState(null);
+  const [prospects, setProspects] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const wasEditingRef = React.useRef(false);
+
+  const fetchLHProspects = useCallback(async () => {
+    if (!userId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/prospects/lh/${userId}`);
+      if (!res.ok) throw new Error('Failed to load prospects');
+      const data = await res.json();
+      setProspects(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || 'Error loading prospects');
+      setProspects([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  // Fetch when switching to list tabs
+  useEffect(() => {
+    if (['assigned', 'lnc', 'lc'].includes(activeTab)) {
+      fetchLHProspects();
+    }
+  }, [activeTab, fetchLHProspects]);
+
+  // After save, refresh and go to assigned tab
+  useEffect(() => {
+    if (activeProspect) {
+      wasEditingRef.current = true;
+    } else if (wasEditingRef.current) {
+      wasEditingRef.current = false;
+      setEditingFromTab(null);
+      setActiveTab('assigned');
+      fetchLHProspects();
+    }
+  }, [activeProspect, fetchLHProspects]);
+
+  const handleSelectProspect = (p, fromTab) => {
+    loadProspect(p);
+    setEditingFromTab(fromTab);
+  };
+
+  const handleBackToTab = () => {
+    wasEditingRef.current = false;
+    clearProspect();
+    setEditingFromTab(null);
+  };
+
+  // Filter prospects per tab
+  const assignedProspects = prospects.filter((p) => p.status === 'data_refined');
+  const lncProspects = prospects.filter((p) => p.status === 'LNC' || p.status === 'B_LNC');
+  const lcProspects = prospects.filter((p) => p.status === 'LC' || p.status === 'B_LC');
+
+  // Stats for dashboard
+  const totalProspects = prospects.length;
+  const statusCounts = prospects.reduce((acc, p) => {
+    acc[p.status] = (acc[p.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  // If editing from a tab
+  if (activeProspect && editingFromTab) {
+    return (
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={handleBackToTab}
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+        >
+          <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+          Back to {LH_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}
+        </button>
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-sm font-medium text-slate-700">Editing Prospect</span>
+        </div>
+        <ProspectForm />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Tab bar — compact for 5 tabs */}
+      <div className="flex rounded-lg bg-white border border-slate-200 p-1 shadow-sm">
+        {LH_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => {
+              wasEditingRef.current = false;
+              clearProspect();
+              setEditingFromTab(null);
+              setActiveTab(tab.key);
+            }}
+            className={`flex-1 py-2 px-1.5 rounded-md text-xs font-semibold transition-colors ${
+              activeTab === tab.key
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Assigned tab */}
+      {activeTab === 'assigned' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">Assigned ({assignedProspects.length})</h3>
+            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList
+            prospects={assignedProspects}
+            loading={loading}
+            error={error}
+            emptyText="No prospects assigned to you yet."
+            onSelect={(p) => handleSelectProspect(p, 'assigned')}
+          />
+        </div>
+      )}
+
+      {/* LNC tab */}
+      {activeTab === 'lnc' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">LNC ({lncProspects.length})</h3>
+            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList
+            prospects={lncProspects}
+            loading={loading}
+            error={error}
+            emptyText="No prospects in LNC status."
+            onSelect={(p) => handleSelectProspect(p, 'lnc')}
+          />
+        </div>
+      )}
+
+      {/* LC tab */}
+      {activeTab === 'lc' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">LC ({lcProspects.length})</h3>
+            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList
+            prospects={lcProspects}
+            loading={loading}
+            error={error}
+            emptyText="No prospects in LC status."
+            onSelect={(p) => handleSelectProspect(p, 'lc')}
+          />
+        </div>
+      )}
+
+      {/* Task tab */}
+      {activeTab === 'task' && (
+        <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm text-center">
+          <h3 className="text-base font-bold text-slate-800 mb-1.5">Tasks</h3>
+          <p className="text-sm text-slate-500">No tasks yet. Tasks will appear here when assigned.</p>
+        </div>
+      )}
+
+      {/* Dashboard tab */}
+      {activeTab === 'dashboard' && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-bold text-slate-800">Dashboard</h3>
+
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">Total Assigned</p>
+              <p className="text-2xl font-bold text-slate-800 mt-1">{totalProspects}</p>
+            </div>
+            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">LNC</p>
+              <p className="text-2xl font-bold text-red-600 mt-1">{(statusCounts['LNC'] || 0) + (statusCounts['B_LNC'] || 0)}</p>
+            </div>
+            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">LC</p>
+              <p className="text-2xl font-bold text-emerald-600 mt-1">{(statusCounts['LC'] || 0) + (statusCounts['B_LC'] || 0)}</p>
+            </div>
+            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">Communication</p>
+              <p className="text-2xl font-bold text-purple-600 mt-1">{statusCounts['COMMUNICATION'] || 0}</p>
+            </div>
+          </div>
+
+          {/* Status breakdown */}
+          <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Status Breakdown</h4>
+            <div className="space-y-2">
+              {Object.entries(statusCounts).sort((a, b) => b[1] - a[1]).map(([status, count]) => (
+                <div key={status} className="flex items-center justify-between">
+                  <span className="text-sm text-slate-700">{status.replace('_', ' ')}</span>
+                  <span className="text-sm font-semibold text-slate-800">{count}</span>
+                </div>
+              ))}
+              {Object.keys(statusCounts).length === 0 && (
+                <p className="text-sm text-slate-400">No data yet.</p>
+              )}
+            </div>
+          </div>
+
+          <button type="button" onClick={fetchLHProspects} className="w-full rounded-lg border border-slate-200 bg-white py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />
+            Refresh Data
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Default view for non-DC_R/LH roles ──────────────────────────────
+const DefaultView = ({ onRequestCaptureSelection }) => {
+  const { activeProspect, startNewProspect, clearProspect, loadProspect } = useProspect();
   const [viewMode, setViewMode] = useState('home'); // 'home' | 'prospects'
   const [fromProspectsList, setFromProspectsList] = useState(false);
   const [prospects, setProspects] = useState([]);
@@ -31,6 +548,113 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
       })
       .finally(() => setProspectsLoading(false));
   }, [viewMode]);
+
+  if (viewMode === 'prospects') {
+    return (
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => {
+            clearProspect();
+            setFromProspectsList(false);
+            setViewMode('home');
+          }}
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+        >
+          <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+          Back
+        </button>
+        <h3 className="text-base font-bold text-slate-800">All prospects</h3>
+        <ProspectList
+          prospects={prospects}
+          loading={prospectsLoading}
+          error={prospectsError}
+          emptyText="No prospects saved yet."
+          onSelect={(p) => {
+            loadProspect(p);
+            setFromProspectsList(true);
+            setViewMode('home');
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (!activeProspect) {
+    return (
+      <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm">
+        <h3 className="text-base font-bold text-slate-800 mb-1.5">
+          Ready to capture prospects
+        </h3>
+        <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+          Start a new prospect session. Select text and copy (Ctrl+C), or capture the
+          current selection below.
+        </p>
+        <div className="space-y-3">
+          {typeof onRequestCaptureSelection === 'function' && (
+            <button
+              type="button"
+              onClick={onRequestCaptureSelection}
+              className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
+            >
+              <MousePointer2 className="w-4 h-4" strokeWidth={2} />
+              Capture selection
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setFromProspectsList(false);
+              startNewProspect();
+            }}
+            className="w-full rounded-lg bg-primary-600 py-3 px-4 text-sm font-semibold text-white hover:bg-primary-700 transition-colors inline-flex items-center justify-center gap-2"
+          >
+            <UserPlus className="w-4 h-4" strokeWidth={2.5} />
+            Start New Prospect
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('prospects')}
+            className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
+          >
+            <List className="w-4 h-4" strokeWidth={2} />
+            View all prospects
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {fromProspectsList && (
+        <button
+          type="button"
+          onClick={() => {
+            setFromProspectsList(false);
+            setViewMode('prospects');
+          }}
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+        >
+          <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+          Back to list
+        </button>
+      )}
+      <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+        <span className="text-sm font-medium text-slate-700">Active Prospect Session</span>
+      </div>
+      <ProspectForm />
+    </div>
+  );
+};
+
+// ── Main OverlayPanel ───────────────────────────────────────────────
+const OverlayPanel = ({ onRequestCaptureSelection }) => {
+  const { isCollapsed, setIsCollapsed, reloadDraftFromStorage, authUser, logout } = useProspect();
+
+  const isDCR = authUser?.role === 'DC_R';
+  const isLH = authUser?.role === 'LH';
 
   // Notify parent (content script) so it can hide iframe and show transparent tab when collapsed
   React.useEffect(() => {
@@ -61,7 +685,7 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
     >
       {!isCollapsed ? (
         <>
-          {/* Header - solid purple/blue like reference */}
+          {/* Header */}
           <header className="flex-shrink-0 bg-primary-600 text-white">
             <div className="flex items-center justify-between px-4 py-3.5">
               <div className="flex items-center gap-2.5">
@@ -101,155 +725,15 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
             </div>
           </header>
 
-          {/* Content - light gray background, white card inside */}
+          {/* Content */}
           <div className="flex-1 flex flex-col overflow-hidden bg-slate-100">
             <div className="flex-1 overflow-y-auto scroll-thin p-4">
-              {viewMode === 'prospects' ? (
-                <div className="space-y-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearProspect();
-                      setFromProspectsList(false);
-                      setViewMode('home');
-                    }}
-                    className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
-                  >
-                    <ArrowLeft className="w-4 h-4" strokeWidth={2} />
-                    Back
-                  </button>
-                  <h3 className="text-base font-bold text-slate-800">All prospects</h3>
-                  {prospectsLoading ? (
-                    <div className="flex items-center justify-center py-12">
-                      <Loader2 className="w-8 h-8 animate-spin text-primary-500" strokeWidth={2} />
-                    </div>
-                  ) : prospectsError ? (
-                    <p className="text-sm text-red-600 py-4">{prospectsError}</p>
-                  ) : prospects.length === 0 ? (
-                    <p className="text-sm text-slate-500 py-4">No prospects saved yet.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {prospects.map((p) => (
-                        <button
-                          type="button"
-                          key={p.id}
-                          onClick={() => {
-                            loadProspect(p);
-                            setFromProspectsList(true);
-                            setViewMode('home');
-                          }}
-                          className="w-full text-left rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm hover:border-primary-300 hover:shadow-md transition-colors cursor-pointer"
-                        >
-                          <div className="font-semibold text-slate-800 truncate">
-                            {p.name || '—'}
-                          </div>
-                          {p.email && (
-                            <a
-                              href={`mailto:${p.email}`}
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-xs text-primary-600 hover:underline truncate block"
-                            >
-                              {p.email}
-                            </a>
-                          )}
-                          {p.company_name && (
-                            <p className="text-xs text-slate-500 mt-1 truncate">{p.company_name}</p>
-                          )}
-                          <div className="flex flex-wrap gap-1.5 mt-2">
-                            {p.category && (
-                              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-                                {String(p.category).replace('_', '-')}
-                              </span>
-                            )}
-                            {p.sources && (
-                              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-                                {p.sources}
-                              </span>
-                            )}
-                            {p.status && (
-                              <span className="text-[10px] px-2 py-0.5 rounded bg-primary-100 text-primary-700">
-                                {String(p.status).replace('_', ' ')}
-                              </span>
-                            )}
-                          </div>
-                          {p.linkedin_url && (
-                            <a
-                              href={p.linkedin_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-xs text-primary-600 hover:underline mt-2 inline-block truncate max-w-full"
-                            >
-                              LinkedIn →
-                            </a>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : !activeProspect ? (
-                <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm">
-                  <h3 className="text-base font-bold text-slate-800 mb-1.5">
-                    Ready to capture prospects
-                  </h3>
-                  <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-                    Start a new prospect session. Select text and copy (Ctrl+C), or capture the
-                    current selection below.
-                  </p>
-                  <div className="space-y-3">
-                    {typeof onRequestCaptureSelection === 'function' && (
-                      <button
-                        type="button"
-                        onClick={onRequestCaptureSelection}
-                        className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
-                      >
-                        <MousePointer2 className="w-4 h-4" strokeWidth={2} />
-                        Capture selection
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFromProspectsList(false);
-                        startNewProspect();
-                      }}
-                      className="w-full rounded-lg bg-primary-600 py-3 px-4 text-sm font-semibold text-white hover:bg-primary-700 transition-colors inline-flex items-center justify-center gap-2"
-                    >
-                      <UserPlus className="w-4 h-4" strokeWidth={2.5} />
-                      Start New Prospect
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setViewMode('prospects')}
-                      className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
-                    >
-                      <List className="w-4 h-4" strokeWidth={2} />
-                      View all prospects
-                    </button>
-                  </div>
-                </div>
+              {isDCR ? (
+                <DCRTabsView onRequestCaptureSelection={onRequestCaptureSelection} />
+              ) : isLH ? (
+                <LHTabsView />
               ) : (
-                <div className="space-y-4">
-                  {fromProspectsList && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFromProspectsList(false);
-                        setViewMode('prospects');
-                      }}
-                      className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
-                    >
-                      <ArrowLeft className="w-4 h-4" strokeWidth={2} />
-                      Back to list
-                    </button>
-                  )}
-                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-sm font-medium text-slate-700">Active Prospect Session</span>
-                  </div>
-                  <ProspectForm />
-                </div>
+                <DefaultView onRequestCaptureSelection={onRequestCaptureSelection} />
               )}
             </div>
 

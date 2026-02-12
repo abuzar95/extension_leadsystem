@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useProspect } from '../context/ProspectContext';
+import { API_URL } from '../config.js';
 import {
   User,
   Mail,
@@ -14,6 +15,8 @@ import {
   Briefcase,
   Linkedin,
   ExternalLink,
+  X,
+  Link2,
 } from './icons';
 
 const inputBase =
@@ -65,6 +68,219 @@ const RequiredLabel = ({ children }) => (
   </label>
 );
 
+const SkillsTagInput = ({ icon: Icon, tags, onChange, placeholder }) => {
+  const [query, setQuery] = useState('');
+  const [allSkills, setAllSkills] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(0);
+  const wrapperRef = useRef(null);
+  const inputRef = useRef(null);
+
+  // Fetch skills once on mount
+  useEffect(() => {
+    let cancelled = false;
+    const fetchSkills = async () => {
+      try {
+        const res = await fetch(`${API_URL}/skills`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) setAllSkills(data.map((s) => s.name));
+        }
+      } catch (err) {
+        console.error('Failed to fetch skills:', err);
+      }
+    };
+    fetchSkills();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const filtered = allSkills.filter(
+    (s) =>
+      s.toLowerCase().includes(query.toLowerCase()) &&
+      !tags.includes(s)
+  );
+
+  const selectSkill = useCallback((skill) => {
+    if (!tags.includes(skill)) {
+      onChange([...tags, skill]);
+    }
+    setQuery('');
+    setOpen(false);
+    setHighlightIdx(0);
+    inputRef.current?.focus();
+  }, [tags, onChange]);
+
+  const removeTag = (index) => {
+    onChange(tags.filter((_, i) => i !== index));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIdx((prev) => Math.min(prev + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIdx((prev) => Math.max(prev - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (open && filtered.length > 0 && highlightIdx < filtered.length) {
+        selectSkill(filtered[highlightIdx]);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    } else if (e.key === 'Backspace' && query === '' && tags.length > 0) {
+      removeTag(tags.length - 1);
+    }
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <div
+        className={`${inputBase} flex flex-wrap items-center gap-1.5 min-h-[44px] h-auto py-2 cursor-text`}
+        onClick={() => inputRef.current?.focus()}
+      >
+        {tags.map((tag, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1 rounded-md bg-primary-50 border border-primary-200 px-2 py-0.5 text-xs font-medium text-primary-700 whitespace-nowrap"
+          >
+            {tag}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); removeTag(i); }}
+              className="ml-0.5 text-primary-400 hover:text-primary-700 leading-none"
+            >
+              <X className="w-3 h-3" strokeWidth={2.5} />
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            setHighlightIdx(0);
+          }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
+          placeholder={tags.length === 0 ? placeholder : 'Search skills...'}
+          className="flex-1 min-w-[80px] border-none outline-none bg-transparent text-sm text-slate-800 placeholder-slate-400 p-0"
+        />
+        {Icon && (
+          <span className="pointer-events-none text-slate-400 ml-auto flex-shrink-0">
+            <Icon className="w-4 h-4" strokeWidth={2} />
+          </span>
+        )}
+      </div>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute z-50 left-0 right-0 mt-1 max-h-[180px] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          {filtered.length === 0 ? (
+            <div className="px-4 py-3 text-xs text-slate-400">
+              {allSkills.length === 0 ? 'Loading skills...' : 'No matching skills'}
+            </div>
+          ) : (
+            filtered.map((skill, i) => (
+              <button
+                key={skill}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); selectSkill(skill); }}
+                onMouseEnter={() => setHighlightIdx(i)}
+                className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                  i === highlightIdx
+                    ? 'bg-primary-50 text-primary-700'
+                    : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                {skill}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── LinkedIn Handler Picker (shown when status = data_refined) ───────
+const LHUserPicker = ({ intentCategory, value, onChange }) => {
+  const [lhUsers, setLhUsers] = useState([]);
+  const [loadingLH, setLoadingLH] = useState(false);
+
+  // Fetch LH users once
+  useEffect(() => {
+    let cancelled = false;
+    const fetchLH = async () => {
+      setLoadingLH(true);
+      try {
+        const res = await fetch(`${API_URL}/users`);
+        if (res.ok) {
+          const all = await res.json();
+          // Only users with role LH
+          const lh = all.filter((u) => u.role === 'LH');
+          if (!cancelled) setLhUsers(lh);
+        }
+      } catch (err) {
+        console.error('Failed to fetch LH users:', err);
+      } finally {
+        if (!cancelled) setLoadingLH(false);
+      }
+    };
+    fetchLH();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Filter: show LH users whose linkedin_profile.niche matches the prospect's intent_category
+  // Also include users whose niche is "Both" (matches everything), and if prospect intent is "Both", show all LH users
+  const matchingUsers = lhUsers.filter((u) => {
+    const niche = u.linkedin_profile?.niche;
+    if (!niche || !intentCategory) return false;
+    if (intentCategory === 'Both' || niche === 'Both') return true;
+    return niche === intentCategory;
+  });
+
+  return (
+    <section>
+      <SectionHeading>LinkedIn Handler</SectionHeading>
+      <div className="space-y-3">
+        <FieldLabel>Assign LH User</FieldLabel>
+        <SelectWithIcon
+          value={value || ''}
+          onChange={onChange}
+        >
+          <option value="">
+            {loadingLH ? 'Loading...' : matchingUsers.length === 0 ? 'No matching LH users' : 'Select LinkedIn handler'}
+          </option>
+          {matchingUsers.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name || u.email} — {u.linkedin_profile?.name || 'No profile'}
+            </option>
+          ))}
+        </SelectWithIcon>
+        {matchingUsers.length === 0 && !loadingLH && intentCategory && (
+          <p className="text-xs text-amber-600">
+            No LH users found with niche matching &quot;{intentCategory}&quot;.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+};
+
 const ensureUrl = (url) => {
   const u = (url || '').trim();
   return !u ? '' : /^https?:\/\//i.test(u) ? u : 'https://' + u;
@@ -81,7 +297,10 @@ const ProspectForm = () => {
     (activeProspect.category || '').trim() !== '' &&
     (activeProspect.sources || '').trim() !== '' &&
     (activeProspect.status || '').trim() !== '' &&
-    (activeProspect.linkedin_url || '').trim() !== '';
+    (activeProspect.linkedin_url || '').trim() !== '' &&
+    (activeProspect.intent_proof_link || '').trim() !== '' &&
+    (activeProspect.intent_category || '').trim() !== '' &&
+    Array.isArray(activeProspect.intent_skills) && activeProspect.intent_skills.length > 0;
   const canSave = hasRequired && !loading;
 
   const handleSave = async () => {
@@ -135,14 +354,46 @@ const ProspectForm = () => {
             value={activeProspect.name || ''}
             onChange={(v) => handleChange('name', v)}
           />
-          {/* 3. Intent */}
-          <FieldLabel>Intent</FieldLabel>
-          <InputWithIcon
+          {/* 3. Intent Skills (tags) */}
+          <RequiredLabel>Intent Skills</RequiredLabel>
+          <SkillsTagInput
             icon={Target}
-            placeholder="e.g. hiring individual, looking for dev services"
-            value={activeProspect.intent || ''}
-            onChange={(v) => handleChange('intent', v)}
+            tags={Array.isArray(activeProspect.intent_skills) ? activeProspect.intent_skills : []}
+            onChange={(tags) => handleChange('intent_skills', tags)}
+            placeholder="Search and select skills..."
           />
+          {/* 3b. Intent Proof Link */}
+          <RequiredLabel>Intent Proof Link</RequiredLabel>
+          <InputWithIcon
+            icon={Link2}
+            type="url"
+            placeholder="Paste proof link (e.g. job post URL)"
+            value={activeProspect.intent_proof_link || ''}
+            onChange={(v) => handleChange('intent_proof_link', v)}
+          />
+          {(activeProspect.intent_proof_link || '').trim() && (
+            <a
+              href={ensureUrl(activeProspect.intent_proof_link)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              <Link2 className="w-4 h-4" strokeWidth={2} />
+              Open Proof Link
+              <ExternalLink className="w-3.5 h-3.5 text-slate-400" strokeWidth={2} />
+            </a>
+          )}
+          {/* 3c. Intent Category */}
+          <RequiredLabel>Intent Category</RequiredLabel>
+          <SelectWithIcon
+            value={activeProspect.intent_category || ''}
+            onChange={(v) => handleChange('intent_category', v)}
+          >
+            <option value="">Select intent category</option>
+            <option value="Individual">Individual</option>
+            <option value="Business">Business</option>
+            <option value="Both">Both</option>
+          </SelectWithIcon>
           {/* 4. Intent Date */}
           <FieldLabel>Intent date</FieldLabel>
           <div className="relative">
@@ -253,7 +504,11 @@ const ProspectForm = () => {
           <RequiredLabel>Status</RequiredLabel>
           <SelectWithIcon
             value={activeProspect.status || 'new'}
-            onChange={(v) => handleChange('status', v)}
+            onChange={(v) => {
+              handleChange('status', v);
+              // Clear LH assignment when switching away from data_refined
+              if (v !== 'data_refined') handleChange('lh_user_id', null);
+            }}
           >
             <option value="new">New</option>
             <option value="data_refined">Data Refined</option>
@@ -262,6 +517,15 @@ const ProspectForm = () => {
           </SelectWithIcon>
         </div>
       </section>
+
+      {/* LinkedIn Handler assignment — shown when status is data_refined */}
+      {activeProspect.status === 'data_refined' && (
+        <LHUserPicker
+          intentCategory={activeProspect.intent_category}
+          value={activeProspect.lh_user_id}
+          onChange={(v) => handleChange('lh_user_id', v || null)}
+        />
+      )}
 
       {/* Actions */}
       <div className="flex gap-3 pt-1">
@@ -277,7 +541,7 @@ const ProspectForm = () => {
           type="button"
           onClick={handleSave}
           disabled={!canSave}
-          title={!hasRequired ? 'Fill Category, Source, Status and LinkedIn URL to save' : undefined}
+          title={!hasRequired ? 'Fill all required fields (*) to save' : undefined}
           className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 py-3 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-70 transition-colors"
         >
           {loading ? (

@@ -95,11 +95,11 @@
     return null;
   }
 
-  var fieldLabels = { name: 'Name', email: 'Email', job_title: 'Designation', company_name: 'Company', website_link: 'Website', linkedin_url: 'LinkedIn URL', category: 'Category', sources: 'Source', status: 'Status', intent: 'Intent', intent_date: 'Intent Date', about_prospect: 'About' };
+  var fieldLabels = { name: 'Name', email: 'Email', job_title: 'Designation', company_name: 'Company', website_link: 'Website', linkedin_url: 'LinkedIn URL', category: 'Category', sources: 'Source', status: 'Status', intent_skills: 'Intent Skills', intent_date: 'Intent Date', about_prospect: 'About' };
   var allFields = [
     { value: 'name', label: 'Name' }, { value: 'email', label: 'Email' }, { value: 'job_title', label: 'Designation' },
     { value: 'company_name', label: 'Company' }, { value: 'website_link', label: 'Website' }, { value: 'linkedin_url', label: 'LinkedIn URL' },
-    { value: 'category', label: 'Category' }, { value: 'sources', label: 'Source' }, { value: 'intent', label: 'Intent' }, { value: 'intent_date', label: 'Intent Date' },
+    { value: 'category', label: 'Category' }, { value: 'sources', label: 'Source' }, { value: 'intent_skills', label: 'Intent Skills' }, { value: 'intent_date', label: 'Intent Date' },
     { value: 'status', label: 'Status' }, { value: 'about_prospect', label: 'About' }
   ];
 
