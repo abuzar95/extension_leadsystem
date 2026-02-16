@@ -94,6 +94,9 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
   const [leadScore, setLeadScore] = useState(prospect?.lead_score ?? '');
   const [linkedinConnection, setLinkedinConnection] = useState(prospect?.linkedin_connection || 'none');
   const [linkedinProfileId, setLinkedinProfileId] = useState(prospect?.linkedin_profile_id || '');
+  const [nextFollowUpDate, setNextFollowUpDate] = useState(prospect?.next_follow_up_date ? prospect.next_follow_up_date.slice(0, 10) : '');
+  const [pitchDescription, setPitchDescription] = useState(prospect?.pitch_description || '');
+  const [pitchedSource, setPitchedSource] = useState(prospect?.pitched_source || '');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
 
@@ -105,6 +108,9 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
       setLinkedinProfileId(
         prospect.linkedin_profile_id || authUser?.linkedin_profile_id || ''
       );
+      setNextFollowUpDate(prospect.next_follow_up_date ? prospect.next_follow_up_date.slice(0, 10) : '');
+      setPitchDescription(prospect.pitch_description || '');
+      setPitchedSource(prospect.pitched_source || '');
       setSaveMsg(null);
     }
   }, [prospect, authUser]);
@@ -132,20 +138,20 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
 
   // Determine current phase based on prospect status
   const isLNCPhase = prospect.status === 'LNC' || prospect.status === 'B_LNC';
+  const isLCPhase = prospect.status === 'LC' || prospect.status === 'B_LC';
   const isAssignedPhase = prospect.status === 'data_refined';
 
   // Validation depends on which phase we are in
-  const canSave = isLNCPhase
-    ? linkedinConnection === 'connected' && !!linkedinProfileId   // LNC → LC requires "connected"
-    : linkedinConnection === 'invite' && !!linkedinProfileId;     // Assigned → LNC requires "invite"
+  const canSave = isLCPhase
+    ? !!nextFollowUpDate                                         // LC phase: follow-up date required
+    : isLNCPhase
+      ? linkedinConnection === 'connected' && !!linkedinProfileId // LNC → LC requires "connected"
+      : linkedinConnection === 'invite' && !!linkedinProfileId;   // Assigned → LNC requires "invite"
 
   // Compute the target status for display
   const getTargetStatus = () => {
-    if (isLNCPhase) {
-      // LNC/B_LNC → LC/B_LC when connected
-      return prospect.email ? 'B_LC' : 'LC';
-    }
-    // data_refined → LNC/B_LNC when invite sent
+    if (isLCPhase) return prospect.status; // LC phase doesn't change status
+    if (isLNCPhase) return prospect.email ? 'B_LC' : 'LC';
     return prospect.email ? 'B_LNC' : 'LNC';
   };
 
@@ -154,21 +160,39 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
     setSaving(true);
     setSaveMsg(null);
     try {
-      const newStatus = getTargetStatus();
+      let body;
 
-      const body = {
-        lead_score: leadScore === '' ? null : Number(leadScore),
-        linkedin_connection: linkedinConnection,
-        linkedin_profile_id: linkedinProfileId || null,
-        status: newStatus,
-      };
+      if (isLCPhase) {
+        // LC phase: update follow-up, lead score, pitch fields + auto-set last_contacted_at
+        body = {
+          lead_score: leadScore === '' ? null : Number(leadScore),
+          next_follow_up_date: nextFollowUpDate ? new Date(nextFollowUpDate).toISOString() : null,
+          pitch_description: pitchDescription || null,
+          pitched_source: pitchedSource || null,
+          last_contacted_at: new Date().toISOString(), // auto-timestamp on update
+        };
+      } else {
+        // Assigned / LNC phase: status transition
+        const newStatus = getTargetStatus();
+        body = {
+          lead_score: leadScore === '' ? null : Number(leadScore),
+          linkedin_connection: linkedinConnection,
+          linkedin_profile_id: linkedinProfileId || null,
+          status: newStatus,
+        };
+      }
+
       const res = await fetch(`${API_URL}/prospects/${prospect.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error('Failed to save');
-      setSaveMsg({ type: 'success', text: `Saved — status set to ${newStatus}` });
+
+      const successText = isLCPhase
+        ? 'Saved — follow-up recorded'
+        : `Saved — status set to ${getTargetStatus()}`;
+      setSaveMsg({ type: 'success', text: successText });
       if (typeof onUpdated === 'function') onUpdated();
     } catch (err) {
       setSaveMsg({ type: 'error', text: err.message || 'Error saving' });
@@ -286,83 +310,162 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
       <div className="rounded-xl bg-white border border-primary-200 p-4 shadow-sm space-y-4">
         <h4 className="text-xs font-semibold text-primary-600 uppercase tracking-wide">Update</h4>
 
-        {/* Lead Score */}
-        <div className="space-y-1">
-          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Lead Score</label>
-          <input
-            type="number"
-            min="0"
-            max="100"
-            value={leadScore}
-            onChange={(e) => setLeadScore(e.target.value)}
-            placeholder="0 – 100"
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          />
-        </div>
+        {/* ── LC Phase fields ── */}
+        {isLCPhase ? (
+          <>
+            {/* Next Follow-up Date */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Next Follow-up Date <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                value={nextFollowUpDate}
+                onChange={(e) => setNextFollowUpDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              />
+            </div>
 
-        {/* LinkedIn Connection */}
-        <div className="space-y-1">
-          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">LinkedIn Connection</label>
-          <select
-            value={linkedinConnection}
-            onChange={(e) => setLinkedinConnection(e.target.value)}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          >
-            <option value="none">None</option>
-            <option value="invite">Invite</option>
-            <option value="connected">Connected</option>
-          </select>
-        </div>
+            {/* Lead Score */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Lead Score</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={leadScore}
+                onChange={(e) => setLeadScore(e.target.value)}
+                placeholder="0 – 100"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              />
+            </div>
 
-        {/* LinkedIn Profile (from logged-in LH user) */}
-        <div className="space-y-1">
-          <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">LinkedIn Profile</label>
-          {availableProfile ? (
-            <select
-              value={linkedinProfileId}
-              onChange={(e) => setLinkedinProfileId(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-            >
-              <option value="">— Select Profile —</option>
-              <option value={availableProfile.id}>
-                {availableProfile.name}{availableProfile.niche ? ` (${availableProfile.niche})` : ''}
-              </option>
-            </select>
-          ) : (
-            <p className="text-xs text-amber-600 py-1.5">No LinkedIn profile linked to your account. Contact admin.</p>
-          )}
-        </div>
+            {/* Pitch Description */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pitch Description</label>
+              <textarea
+                value={pitchDescription}
+                onChange={(e) => setPitchDescription(e.target.value)}
+                placeholder="Describe the pitch…"
+                rows={3}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+              />
+            </div>
 
-        {/* Validation hints */}
-        {!canSave && (
-          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 space-y-1">
-            <p className="text-xs font-semibold text-amber-700">Required to save:</p>
-            {isLNCPhase ? (
-              linkedinConnection !== 'connected' && (
-                <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Connected"</p>
-              )
-            ) : (
-              linkedinConnection !== 'invite' && (
-                <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Invite"</p>
-              )
+            {/* Pitched Source */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pitched Source</label>
+              <select
+                value={pitchedSource}
+                onChange={(e) => setPitchedSource(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              >
+                <option value="">— Select —</option>
+                <option value="linkedin">LinkedIn</option>
+                <option value="email">Email</option>
+                <option value="number">Number</option>
+              </select>
+            </div>
+
+            {/* Validation hint */}
+            {!canSave && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 space-y-1">
+                <p className="text-xs font-semibold text-amber-700">Required to save:</p>
+                <p className="text-xs text-amber-600">• Set a Next Follow-up Date</p>
+              </div>
             )}
-            {!linkedinProfileId && (
-              <p className="text-xs text-amber-600">• Select a LinkedIn Profile</p>
-            )}
-          </div>
-        )}
 
-        {/* Status preview */}
-        {canSave && (
-          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-center">
-            <p className="text-xs text-slate-500">
-              Status will be set to{' '}
-              <span className={`font-semibold ${isLNCPhase ? 'text-emerald-600' : 'text-red-600'}`}>
-                {getTargetStatus()}
-              </span>
-              {prospect.email ? ' (email present)' : ' (no email)'}
-            </p>
-          </div>
+            {/* Info: last_contacted_at will be auto-set */}
+            {canSave && (
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-center">
+                <p className="text-xs text-slate-500">
+                  Last Contacted will be set to <span className="font-semibold text-slate-700">now</span> on save
+                </p>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* ── Assigned / LNC Phase fields ── */}
+            {/* Lead Score */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Lead Score</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={leadScore}
+                onChange={(e) => setLeadScore(e.target.value)}
+                placeholder="0 – 100"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* LinkedIn Connection */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">LinkedIn Connection</label>
+              <select
+                value={linkedinConnection}
+                onChange={(e) => setLinkedinConnection(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              >
+                <option value="none">None</option>
+                <option value="invite">Invite</option>
+                <option value="connected">Connected</option>
+              </select>
+            </div>
+
+            {/* LinkedIn Profile (from logged-in LH user) */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">LinkedIn Profile</label>
+              {availableProfile ? (
+                <select
+                  value={linkedinProfileId}
+                  onChange={(e) => setLinkedinProfileId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                >
+                  <option value="">— Select Profile —</option>
+                  <option value={availableProfile.id}>
+                    {availableProfile.name}{availableProfile.niche ? ` (${availableProfile.niche})` : ''}
+                  </option>
+                </select>
+              ) : (
+                <p className="text-xs text-amber-600 py-1.5">No LinkedIn profile linked to your account. Contact admin.</p>
+              )}
+            </div>
+
+            {/* Validation hints */}
+            {!canSave && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 space-y-1">
+                <p className="text-xs font-semibold text-amber-700">Required to save:</p>
+                {isLNCPhase ? (
+                  linkedinConnection !== 'connected' && (
+                    <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Connected"</p>
+                  )
+                ) : (
+                  linkedinConnection !== 'invite' && (
+                    <p className="text-xs text-amber-600">• Set LinkedIn Connection to "Invite"</p>
+                  )
+                )}
+                {!linkedinProfileId && (
+                  <p className="text-xs text-amber-600">• Select a LinkedIn Profile</p>
+                )}
+              </div>
+            )}
+
+            {/* Status preview */}
+            {canSave && (
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-center">
+                <p className="text-xs text-slate-500">
+                  Status will be set to{' '}
+                  <span className={`font-semibold ${isLNCPhase ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {getTargetStatus()}
+                  </span>
+                  {prospect.email ? ' (email present)' : ' (no email)'}
+                </p>
+              </div>
+            )}
+          </>
         )}
 
         {/* Save button */}
@@ -370,7 +473,7 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
           type="button"
           onClick={handleSave}
           disabled={saving || !canSave}
-          title={!canSave ? 'Set connection to Invite and select a LinkedIn Profile to save' : ''}
+          title={!canSave ? (isLCPhase ? 'Set a follow-up date to save' : 'Complete required fields to save') : ''}
           className="w-full rounded-lg bg-primary-600 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
         >
           {saving ? (
@@ -429,9 +532,14 @@ const DC_R_TABS = [
 ];
 
 const DCRTabsView = ({ onRequestCaptureSelection }) => {
-  const { activeProspect, startNewProspect, clearProspect, loadProspect, userId } = useProspect();
-  const [activeTab, setActiveTab] = useState('new');
-  const [editingFromTab, setEditingFromTab] = useState(null); // which tab we came from
+  const {
+    activeProspect, startNewProspect, clearProspect, loadProspect, userId,
+    panelActiveTab, setPanelActiveTab, panelEditingFromTab, setPanelEditingFromTab, panelStateLoaded
+  } = useProspect();
+  const activeTab = panelActiveTab && DC_R_TABS.some((t) => t.key === panelActiveTab) ? panelActiveTab : 'new';
+  const setActiveTab = setPanelActiveTab;
+  const editingFromTab = panelEditingFromTab;
+  const setEditingFromTab = setPanelEditingFromTab;
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -454,9 +562,9 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
     }
   }, [userId]);
 
-  // Fetch prospects when switching to redefine/assigned, or when userId changes
+  // Fetch prospects when switching to any list tab, or when userId changes
   useEffect(() => {
-    if (activeTab === 'redefine' || activeTab === 'assigned') {
+    if (activeTab === 'new' || activeTab === 'redefine' || activeTab === 'assigned') {
       fetchUserProspects();
     }
   }, [activeTab, fetchUserProspects]);
@@ -489,8 +597,9 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
   };
 
   // Filter prospects per tab
-  const redefineProspects = prospects.filter((p) => p.status === 'data_refined');
-  const assignedProspects = prospects.filter((p) => p.status !== 'data_refined');
+  const newProspects = prospects.filter((p) => p.status === 'new');
+  const redefineProspects = prospects.filter((p) => p.status === 'data_refined' && !p.lh_user_id);
+  const assignedProspects = prospects.filter((p) => p.status === 'data_refined' && !!p.lh_user_id);
 
   // If editing a prospect loaded from a tab list, show the form with a back button
   if (activeProspect && editingFromTab) {
@@ -542,36 +651,55 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
       {activeTab === 'new' && (
         <>
           {!activeProspect ? (
-            <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm">
-              <h3 className="text-base font-bold text-slate-800 mb-1.5">
-                Ready to capture prospects
-              </h3>
-              <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-                Start a new prospect session. Select text and copy (Ctrl+C), or capture the
-                current selection below.
-              </p>
-              <div className="space-y-3">
-                {typeof onRequestCaptureSelection === 'function' && (
+            <div className="space-y-4">
+              {/* Create new section */}
+              <div className="rounded-xl bg-white border border-slate-200/80 p-5 shadow-sm">
+                <h3 className="text-base font-bold text-slate-800 mb-1.5">
+                  Capture New Prospect
+                </h3>
+                <p className="text-sm text-slate-500 mb-4 leading-relaxed">
+                  Select text and copy (Ctrl+C), or start a new session.
+                </p>
+                <div className="space-y-2.5">
+                  {typeof onRequestCaptureSelection === 'function' && (
+                    <button
+                      type="button"
+                      onClick={onRequestCaptureSelection}
+                      className="w-full rounded-lg border border-slate-200 bg-white py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
+                    >
+                      <MousePointer2 className="w-4 h-4" strokeWidth={2} />
+                      Capture selection
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={onRequestCaptureSelection}
-                    className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2"
+                    onClick={() => {
+                      setEditingFromTab(null);
+                      startNewProspect();
+                    }}
+                    className="w-full rounded-lg bg-primary-600 py-2.5 px-4 text-sm font-semibold text-white hover:bg-primary-700 transition-colors inline-flex items-center justify-center gap-2"
                   >
-                    <MousePointer2 className="w-4 h-4" strokeWidth={2} />
-                    Capture selection
+                    <UserPlus className="w-4 h-4" strokeWidth={2.5} />
+                    Start New Prospect
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingFromTab(null);
-                    startNewProspect();
-                  }}
-                  className="w-full rounded-lg bg-primary-600 py-3 px-4 text-sm font-semibold text-white hover:bg-primary-700 transition-colors inline-flex items-center justify-center gap-2"
-                >
-                  <UserPlus className="w-4 h-4" strokeWidth={2.5} />
-                  Start New Prospect
-                </button>
+                </div>
+              </div>
+
+              {/* List of prospects with 'new' status */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-800">New Prospects ({newProspects.length})</h3>
+                  <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+                    <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+                  </button>
+                </div>
+                <ProspectList
+                  prospects={newProspects}
+                  loading={loading}
+                  error={error}
+                  emptyText="No prospects with 'New' status."
+                  onSelect={(p) => handleSelectProspect(p, 'new')}
+                />
               </div>
             </div>
           ) : (
@@ -598,7 +726,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
             prospects={redefineProspects}
             loading={loading}
             error={error}
-            emptyText="No prospects with 'Data Refined' status."
+            emptyText="No data-refined prospects pending LH assignment."
             onSelect={(p) => handleSelectProspect(p, 'redefine')}
           />
         </div>
@@ -607,7 +735,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
       {activeTab === 'assigned' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800">Assigned to you ({assignedProspects.length})</h3>
+            <h3 className="text-sm font-bold text-slate-800">LH Assigned ({assignedProspects.length})</h3>
             <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
@@ -616,7 +744,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
             prospects={assignedProspects}
             loading={loading}
             error={error}
-            emptyText="No prospects assigned to you yet."
+            emptyText="No data-refined prospects with LH assigned yet."
             onSelect={(p) => handleSelectProspect(p, 'assigned')}
           />
         </div>
@@ -635,9 +763,14 @@ const LH_TABS = [
 ];
 
 const LHTabsView = () => {
-  const { activeProspect, clearProspect, loadProspect, userId } = useProspect();
-  const [activeTab, setActiveTab] = useState('assigned');
-  const [editingFromTab, setEditingFromTab] = useState(null);
+  const {
+    activeProspect, clearProspect, loadProspect, userId,
+    panelActiveTab, setPanelActiveTab, panelEditingFromTab, setPanelEditingFromTab, panelStateLoaded
+  } = useProspect();
+  const activeTab = panelActiveTab && LH_TABS.some((t) => t.key === panelActiveTab) ? panelActiveTab : 'assigned';
+  const setActiveTab = setPanelActiveTab;
+  const editingFromTab = panelEditingFromTab;
+  const setEditingFromTab = setPanelEditingFromTab;
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -660,9 +793,9 @@ const LHTabsView = () => {
     }
   }, [userId]);
 
-  // Fetch when switching to list tabs
+  // Fetch when switching to list tabs (including task)
   useEffect(() => {
-    if (['assigned', 'lnc', 'lc'].includes(activeTab)) {
+    if (['assigned', 'lnc', 'lc', 'task'].includes(activeTab)) {
       fetchLHProspects();
     }
   }, [activeTab, fetchLHProspects]);
@@ -693,7 +826,13 @@ const LHTabsView = () => {
   // Filter prospects per tab
   const assignedProspects = prospects.filter((p) => p.status === 'data_refined');
   const lncProspects = prospects.filter((p) => p.status === 'LNC' || p.status === 'B_LNC');
-  const lcProspects = prospects.filter((p) => (p.status === 'LC' || p.status === 'B_LC') && !p.last_contacted_at);
+  const lcProspects = prospects.filter((p) => p.status === 'LC' || p.status === 'B_LC');
+
+  // Task tab: prospects whose next_follow_up_date is today
+  const today = new Date().toISOString().slice(0, 10);
+  const taskProspects = prospects.filter((p) =>
+    p.next_follow_up_date && p.next_follow_up_date.slice(0, 10) === today
+  );
 
   // Stats for dashboard
   const totalProspects = prospects.length;
@@ -798,9 +937,20 @@ const LHTabsView = () => {
 
       {/* Task tab */}
       {activeTab === 'task' && (
-        <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm text-center">
-          <h3 className="text-base font-bold text-slate-800 mb-1.5">Tasks</h3>
-          <p className="text-sm text-slate-500">No tasks yet. Tasks will appear here when assigned.</p>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">Today's Follow-ups ({taskProspects.length})</h3>
+            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList
+            prospects={taskProspects}
+            loading={loading}
+            error={error}
+            emptyText="No follow-ups scheduled for today."
+            onSelect={(p) => handleSelectProspect(p, 'task')}
+          />
         </div>
       )}
 

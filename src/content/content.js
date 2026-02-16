@@ -138,8 +138,8 @@
       wrap.id = 'prospect-inpage-popup';
       wrap.style.cssText = 'position:fixed;left:' + x + 'px;top:' + y + 'px;width:' + popW + 'px;max-height:' + (window.innerHeight - y - pad) + 'px;z-index:2147483647;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 20px 48px rgba(0,0,0,0.18);font-family:system-ui,-apple-system,sans-serif;font-size:13px;overflow:hidden;';
       var header = document.createElement('div');
-      header.style.cssText = 'padding:12px 14px;background:linear-gradient(to right,#4f46e5,#4338ca);color:#fff;font-weight:600;font-size:13px;border-radius:12px 12px 0 0;';
-      header.textContent = 'Paste as';
+      header.style.cssText = 'padding:12px 14px;background:linear-gradient(to right,#4f46e5,#4338ca);color:#fff;font-weight:600;font-size:13px;border-radius:12px 12px 0 0;display:flex;align-items:center;justify-content:space-between;';
+      header.innerHTML = '<span>Paste as</span><span style="font-size:10px;opacity:0.7;font-weight:400;">↑↓ navigate · Enter select · Esc close</span>';
       wrap.appendChild(header);
       var preview = document.createElement('div');
       preview.style.cssText = 'padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;color:#475569;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
@@ -147,23 +147,45 @@
       wrap.appendChild(preview);
       var area = document.createElement('div');
       area.style.cssText = 'padding:10px;max-height:280px;overflow-y:auto;';
+
+      // Collect all buttons for keyboard nav
+      var buttons = [];
+      var focusedIdx = 0;
+
+      var defaultStyle = 'width:100%;padding:8px 12px;margin-bottom:4px;text-align:left;border:1px solid #e2e8f0;background:#fff;color:#334155;border-radius:6px;cursor:pointer;font-size:12px;outline:none;';
+      var suggestedStyle = 'width:100%;padding:10px 12px;margin-bottom:8px;text-align:left;border:2px solid #c7d6fe;background:#e0e9fe;color:#3730a3;border-radius:8px;font-weight:500;cursor:pointer;font-size:13px;outline:none;';
+      var focusRing = 'box-shadow:0 0 0 2px #818cf8;';
+
+      function applyFocus() {
+        buttons.forEach(function (b, i) {
+          if (i === focusedIdx) {
+            b.el.style.cssText = b.baseStyle + focusRing;
+            b.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          } else {
+            b.el.style.cssText = b.baseStyle;
+          }
+        });
+      }
+
       if (suggested) {
         var sugBtn = document.createElement('button');
         sugBtn.type = 'button';
-        sugBtn.style.cssText = 'width:100%;padding:10px 12px;margin-bottom:8px;text-align:left;border:2px solid #c7d6fe;background:#e0e9fe;color:#3730a3;border-radius:8px;font-weight:500;cursor:pointer;font-size:13px;';
+        sugBtn.style.cssText = suggestedStyle;
         var sugLabel = '✨ ' + (fieldLabels[suggested] || suggested);
         var sugVal = fieldValue(suggested);
         sugBtn.innerHTML = sugVal ? sugLabel + '<br><span style="font-size:11px;color:#64748b;font-weight:400;">' + escapeHtml(sugVal) + '</span>' : sugLabel;
         sugBtn.addEventListener('click', function () {
           doPasteToField(suggested, text);
           wrap.remove();
+          cleanup();
         });
+        buttons.push({ el: sugBtn, field: suggested, baseStyle: suggestedStyle });
         area.appendChild(sugBtn);
       }
       allFields.forEach(function (f) {
         var btn = document.createElement('button');
         btn.type = 'button';
-        btn.style.cssText = 'width:100%;padding:8px 12px;margin-bottom:4px;text-align:left;border:1px solid #e2e8f0;background:#fff;color:#334155;border-radius:6px;cursor:pointer;font-size:12px;';
+        btn.style.cssText = defaultStyle;
         var val = fieldValue(f.value);
         if (val) {
           btn.innerHTML = f.label + '<br><span style="font-size:11px;color:#64748b;font-weight:400;">' + escapeHtml(val) + '</span>';
@@ -173,14 +195,54 @@
         btn.addEventListener('click', function () {
           doPasteToField(f.value, text);
           wrap.remove();
+          cleanup();
         });
+        buttons.push({ el: btn, field: f.value, baseStyle: defaultStyle });
         area.appendChild(btn);
       });
       wrap.appendChild(area);
+
+      // Apply initial focus highlight
+      applyFocus();
+
+      // Keyboard handler
+      function keyHandler(e) {
+        if (!document.getElementById('prospect-inpage-popup')) {
+          document.removeEventListener('keydown', keyHandler, true);
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          e.stopPropagation();
+          focusedIdx = Math.min(focusedIdx + 1, buttons.length - 1);
+          applyFocus();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          e.stopPropagation();
+          focusedIdx = Math.max(focusedIdx - 1, 0);
+          applyFocus();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          if (buttons[focusedIdx]) {
+            doPasteToField(buttons[focusedIdx].field, text);
+            wrap.remove();
+            cleanup();
+          }
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          wrap.remove();
+          cleanup();
+        }
+      }
+      document.addEventListener('keydown', keyHandler, true);
+
       var closeTimer = setTimeout(function () { wrap.remove(); cleanup(); }, 8000);
       wrap.addEventListener('click', function (ev) { ev.stopPropagation(); });
       function cleanup() {
         clearTimeout(closeTimer);
+        document.removeEventListener('keydown', keyHandler, true);
         document.body.removeEventListener('click', outsideHandler);
       }
       function outsideHandler() {

@@ -5,6 +5,7 @@ const ProspectContext = createContext();
 import { API_URL } from '../config.js';
 const DRAFT_STORAGE_KEY = 'prospectDraft';
 const AUTH_STORAGE_KEY = 'authUser';
+const PANEL_STATE_KEY = 'panelState'; // { activeTab, editingFromTab, isCollapsed }
 
 const emptyProspect = () => ({
   id: Date.now().toString(),
@@ -32,11 +33,37 @@ export const ProspectProvider = ({ children }) => {
   const [authUser, setAuthUser] = useState(null); // { id, email, name, role }
   const [authLoading, setAuthLoading] = useState(true);
   const [userId, setUserId] = useState(null);
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsedRaw] = useState(false);
+  const [panelActiveTab, setPanelActiveTabRaw] = useState(null); // null until loaded
+  const [panelEditingFromTab, setPanelEditingFromTabRaw] = useState(null);
+  const [panelStateLoaded, setPanelStateLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
 
-  // Load auth user and draft on mount
+  // Persist panel state helpers
+  const persistPanelState = (patch) => {
+    chrome.storage.local.get([PANEL_STATE_KEY]).then((result) => {
+      const current = result[PANEL_STATE_KEY] || {};
+      chrome.storage.local.set({ [PANEL_STATE_KEY]: { ...current, ...patch } }).catch(() => {});
+    }).catch(() => {});
+  };
+
+  const setIsCollapsed = (val) => {
+    setIsCollapsedRaw(val);
+    persistPanelState({ isCollapsed: val });
+  };
+
+  const setPanelActiveTab = (val) => {
+    setPanelActiveTabRaw(val);
+    persistPanelState({ activeTab: val });
+  };
+
+  const setPanelEditingFromTab = (val) => {
+    setPanelEditingFromTabRaw(val);
+    persistPanelState({ editingFromTab: val });
+  };
+
+  // Load auth user, draft, and panel state on mount
   useEffect(() => {
     loadAuth();
   }, []);
@@ -52,7 +79,7 @@ export const ProspectProvider = ({ children }) => {
 
   const loadAuth = async () => {
     try {
-      const result = await chrome.storage.local.get([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY]);
+      const result = await chrome.storage.local.get([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY, PANEL_STATE_KEY]);
       const stored = result[AUTH_STORAGE_KEY];
       if (stored && typeof stored === 'object' && stored.id) {
         setAuthUser(stored);
@@ -65,9 +92,18 @@ export const ProspectProvider = ({ children }) => {
         if (draft.created_at) merged.created_at = draft.created_at;
         setActiveProspect(merged);
       }
+      // Restore panel state
+      const ps = result[PANEL_STATE_KEY];
+      if (ps && typeof ps === 'object') {
+        if (typeof ps.isCollapsed === 'boolean') setIsCollapsedRaw(ps.isCollapsed);
+        if (ps.activeTab) setPanelActiveTabRaw(ps.activeTab);
+        if (ps.editingFromTab) setPanelEditingFromTabRaw(ps.editingFromTab);
+      }
+      setPanelStateLoaded(true);
       setDraftLoaded(true);
     } catch (error) {
       console.error('Error loading auth:', error);
+      setPanelStateLoaded(true);
       setDraftLoaded(true);
     } finally {
       setAuthLoading(false);
@@ -84,7 +120,10 @@ export const ProspectProvider = ({ children }) => {
     setAuthUser(null);
     setUserId(null);
     setActiveProspect(null);
-    await chrome.storage.local.remove([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY]).catch(() => {});
+    setPanelActiveTabRaw(null);
+    setPanelEditingFromTabRaw(null);
+    setIsCollapsedRaw(false);
+    await chrome.storage.local.remove([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY, PANEL_STATE_KEY]).catch(() => {});
   };
 
   const startNewProspect = () => {
@@ -184,6 +223,11 @@ export const ProspectProvider = ({ children }) => {
     userId,
     isCollapsed,
     setIsCollapsed,
+    panelActiveTab,
+    setPanelActiveTab,
+    panelEditingFromTab,
+    setPanelEditingFromTab,
+    panelStateLoaded,
     login,
     logout,
     startNewProspect,
