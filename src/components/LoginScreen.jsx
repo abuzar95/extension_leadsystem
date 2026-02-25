@@ -1,27 +1,32 @@
 import React, { useState } from 'react';
-import { UserPlus, Mail, Loader2 } from './icons';
+import { UserPlus, Mail, Lock, Loader2 } from './icons';
 
 import { API_URL } from '../config.js';
 
 const LoginScreen = ({ onLogin }) => {
-  const [email, setEmail] = useState('');
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) {
-      setError('Please enter your email');
+    const loginTrimmed = login.trim();
+    if (!loginTrimmed) {
+      setError('Please enter your username or email');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password');
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/auth/login`, {
+      const res = await fetch(`${API_URL}/auth/dashboard-login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: trimmed }),
+        body: JSON.stringify({ login: loginTrimmed, password }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -29,7 +34,7 @@ const LoginScreen = ({ onLogin }) => {
         setLoading(false);
         return;
       }
-      onLogin(data);
+      onLogin({ user: data.user, token: data.token });
     } catch (err) {
       setError('Cannot connect to server. Is the backend running?');
     } finally {
@@ -52,26 +57,46 @@ const LoginScreen = ({ onLogin }) => {
       {/* Login form */}
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-sm">
-          <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm">
+          <div className="ext-card ext-card-body p-6">
             <h2 className="text-lg font-bold text-slate-800 mb-1">Sign in</h2>
-            <p className="text-sm text-slate-500 mb-6">Enter your email to continue</p>
+            <p className="text-sm text-slate-500 mb-6">Use your username or email and password</p>
 
             <form onSubmit={handleSubmit}>
               <div className="mb-4">
                 <label className="block text-xs font-medium text-slate-600 mb-1.5">
-                  Email <span className="text-red-500">*</span>
+                  Username or email <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
                   <input
-                    type="email"
-                    placeholder="you@company.com"
-                    value={email}
-                    onChange={(e) => { setEmail(e.target.value); setError(null); }}
+                    type="text"
+                    placeholder="Username or you@company.com"
+                    value={login}
+                    onChange={(e) => { setLogin(e.target.value); setError(null); }}
                     className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 pr-10 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 transition-colors"
+                    autoComplete="username"
                     autoFocus
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                     <Mail className="w-4 h-4" strokeWidth={2} />
+                  </span>
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                  Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError(null); }}
+                    className="w-full rounded-lg border border-slate-200 bg-white py-3 px-4 pr-10 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 transition-colors"
+                    autoComplete="current-password"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <Lock className="w-4 h-4" strokeWidth={2} />
                   </span>
                 </div>
               </div>

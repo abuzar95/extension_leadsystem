@@ -5,6 +5,7 @@ const ProspectContext = createContext();
 import { API_URL } from '../config.js';
 const DRAFT_STORAGE_KEY = 'prospectDraft';
 const AUTH_STORAGE_KEY = 'authUser';
+const AUTH_TOKEN_KEY = 'authToken';
 const PANEL_STATE_KEY = 'panelState'; // { activeTab, editingFromTab, isCollapsed }
 
 const emptyProspect = () => ({
@@ -31,6 +32,7 @@ const emptyProspect = () => ({
 export const ProspectProvider = ({ children }) => {
   const [activeProspect, setActiveProspect] = useState(null);
   const [authUser, setAuthUser] = useState(null); // { id, email, name, role }
+  const [authToken, setAuthToken] = useState(null); // JWT for API calls (e.g. change password)
   const [authLoading, setAuthLoading] = useState(true);
   const [userId, setUserId] = useState(null);
   const [isCollapsed, setIsCollapsedRaw] = useState(false);
@@ -79,11 +81,14 @@ export const ProspectProvider = ({ children }) => {
 
   const loadAuth = async () => {
     try {
-      const result = await chrome.storage.local.get([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY, PANEL_STATE_KEY]);
+      const result = await chrome.storage.local.get([AUTH_STORAGE_KEY, AUTH_TOKEN_KEY, DRAFT_STORAGE_KEY, PANEL_STATE_KEY]);
       const stored = result[AUTH_STORAGE_KEY];
       if (stored && typeof stored === 'object' && stored.id) {
         setAuthUser(stored);
         setUserId(stored.id);
+      }
+      if (result[AUTH_TOKEN_KEY] && typeof result[AUTH_TOKEN_KEY] === 'string') {
+        setAuthToken(result[AUTH_TOKEN_KEY]);
       }
       if (result[DRAFT_STORAGE_KEY] && typeof result[DRAFT_STORAGE_KEY] === 'object') {
         const draft = result[DRAFT_STORAGE_KEY];
@@ -110,20 +115,43 @@ export const ProspectProvider = ({ children }) => {
     }
   };
 
-  const login = async (user) => {
+  const login = async (userOrPayload, tokenOrUndefined) => {
+    const user = userOrPayload?.user ?? userOrPayload;
+    const token = tokenOrUndefined ?? userOrPayload?.token ?? null;
+    if (!user || !user.id) return;
     setAuthUser(user);
     setUserId(user.id);
-    await chrome.storage.local.set({ [AUTH_STORAGE_KEY]: user }).catch(() => {});
+    setAuthToken(token);
+    await chrome.storage.local.set({
+      [AUTH_STORAGE_KEY]: user,
+      ...(token ? { [AUTH_TOKEN_KEY]: token } : {}),
+    }).catch(() => {});
   };
 
   const logout = async () => {
     setAuthUser(null);
     setUserId(null);
+    setAuthToken(null);
     setActiveProspect(null);
     setPanelActiveTabRaw(null);
     setPanelEditingFromTabRaw(null);
     setIsCollapsedRaw(false);
-    await chrome.storage.local.remove([AUTH_STORAGE_KEY, DRAFT_STORAGE_KEY, PANEL_STATE_KEY]).catch(() => {});
+    await chrome.storage.local.remove([AUTH_STORAGE_KEY, AUTH_TOKEN_KEY, DRAFT_STORAGE_KEY, PANEL_STATE_KEY]).catch(() => {});
+  };
+
+  const changePassword = async (currentPassword, newPassword) => {
+    if (!authToken) throw new Error('Not authenticated');
+    const res = await fetch(`${API_URL}/auth/change-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ currentPassword, newPassword: newPassword.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to update password');
+    return data;
   };
 
   const startNewProspect = () => {
@@ -173,7 +201,7 @@ export const ProspectProvider = ({ children }) => {
     updateProspectField(field, text);
   };
 
-  const saveProspect = async () => {
+  const saveProspect = async (options = {}) => {
     if (!activeProspect || !userId) {
       throw new Error('No active prospect or user ID');
     }
@@ -206,8 +234,12 @@ export const ProspectProvider = ({ children }) => {
       }
 
       const saved = await response.json();
-      setActiveProspect(null);
-      await chrome.storage.local.remove(DRAFT_STORAGE_KEY).catch(() => {});
+      if (options.stayOnNewAndReload) {
+        loadProspect(saved);
+      } else {
+        setActiveProspect(null);
+        await chrome.storage.local.remove(DRAFT_STORAGE_KEY).catch(() => {});
+      }
       setLoading(false);
       return saved;
     } catch (error) {
@@ -219,8 +251,10 @@ export const ProspectProvider = ({ children }) => {
   const value = {
     activeProspect,
     authUser,
+    authToken,
     authLoading,
     userId,
+    changePassword,
     isCollapsed,
     setIsCollapsed,
     panelActiveTab,

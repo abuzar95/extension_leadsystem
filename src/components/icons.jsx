@@ -25,6 +25,8 @@ import {
   List,
   ArrowLeft,
   ExternalLink,
+  Lock,
+  Settings,
 } from 'lucide-react';
 
 export const FieldIcons = {
@@ -69,4 +71,6 @@ export {
   List,
   ArrowLeft,
   ExternalLink,
+  Lock,
+  Settings,
 };

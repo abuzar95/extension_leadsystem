@@ -35,3 +35,44 @@
 .scroll-thin::-webkit-scrollbar-thumb {
   @apply bg-slate-300 rounded-full hover:bg-slate-400;
 }
+
+/* ── Card layout (extension) ───────────────────────────────────────── */
+.ext-card {
+  @apply rounded-xl bg-white border border-slate-200/90 overflow-hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.ext-card.ext-card-interactive:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  @apply border-primary-200;
+}
+.ext-card-body {
+  @apply p-4;
+}
+.ext-card-header {
+  @apply px-4 py-3 border-b border-slate-100 bg-slate-50/80;
+}
+.ext-card-header-title {
+  @apply text-xs font-semibold uppercase tracking-wider text-slate-500;
+}
+.ext-card-accent {
+  border-left: 3px solid #6366f1;
+}
+.ext-card-interactive {
+  @apply cursor-pointer active:scale-[0.99] transition-transform;
+}
+.ext-badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium;
+}
+.ext-badge-slate {
+  @apply bg-slate-100 text-slate-600;
+}
+.ext-badge-primary {
+  @apply bg-primary-100 text-primary-700;
+}
+.ext-badge-emerald {
+  @apply bg-emerald-100 text-emerald-700;
+}
+.ext-badge-amber {
+  @apply bg-amber-100 text-amber-700;
+}

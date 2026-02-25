@@ -286,8 +286,9 @@ const ensureUrl = (url) => {
   return !u ? '' : /^https?:\/\//i.test(u) ? u : 'https://' + u;
 };
 
-const ProspectForm = () => {
-  const { activeProspect, updateProspectField, clearProspect, saveProspect, loading } = useProspect();
+const ProspectForm = ({ stayOnNewAfterSave = false, onSaveSuccess }) => {
+  const { activeProspect, updateProspectField, clearProspect, saveProspect, loading, authUser } = useProspect();
+  const isDCR = authUser?.role === 'DC_R';
 
   if (!activeProspect) return null;
 
@@ -306,7 +307,10 @@ const ProspectForm = () => {
   const handleSave = async () => {
     if (!hasRequired) return;
     try {
-      await saveProspect();
+      await saveProspect({ stayOnNewAndReload: stayOnNewAfterSave });
+      if (stayOnNewAfterSave && typeof onSaveSuccess === 'function') {
+        onSaveSuccess();
+      }
     } catch (error) {
       alert('Error saving prospect: ' + error.message);
     }
@@ -472,15 +476,19 @@ const ProspectForm = () => {
               <ExternalLink className="w-3.5 h-3.5 text-slate-400" strokeWidth={2} />
             </a>
           )}
-          <FieldLabel>LinkedIn connection</FieldLabel>
-          <SelectWithIcon
-            value={activeProspect.linkedin_connection || 'none'}
-            onChange={(v) => handleChange('linkedin_connection', v)}
-          >
-            <option value="none">None</option>
-            <option value="invite">Invite</option>
-            <option value="connected">Connected</option>
-          </SelectWithIcon>
+          {!isDCR && (
+            <>
+              <FieldLabel>LinkedIn connection</FieldLabel>
+              <SelectWithIcon
+                value={activeProspect.linkedin_connection || 'none'}
+                onChange={(v) => handleChange('linkedin_connection', v)}
+              >
+                <option value="none">None</option>
+                <option value="invite">Invite</option>
+                <option value="connected">Connected</option>
+              </SelectWithIcon>
+            </>
+          )}
           <FieldLabel>Website URL</FieldLabel>
           <InputWithIcon
             icon={Globe}

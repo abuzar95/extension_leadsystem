@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useProspect } from '../context/ProspectContext';
 import ProspectForm from './ProspectForm';
-import { UserPlus, MousePointer2, PanelLeftClose, PanelLeft, RefreshCw, List, ArrowLeft, Loader2 } from './icons';
+import { UserPlus, MousePointer2, PanelLeftClose, PanelLeft, RefreshCw, List, ArrowLeft, Loader2, Settings } from './icons';
+import { Search } from 'lucide-react';
+import SettingsPage from './SettingsPage';
 
 import { API_URL } from '../config.js';
 
@@ -10,51 +12,63 @@ const ProspectCard = ({ prospect, onClick }) => (
   <button
     type="button"
     onClick={onClick}
-    className="w-full text-left rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm hover:border-primary-300 hover:shadow-md transition-colors cursor-pointer"
+    className="ext-card ext-card-interactive ext-card-accent w-full text-left ext-card-body"
   >
-    <div className="font-semibold text-slate-800 truncate">
-      {prospect.name || '—'}
+    <div className="flex flex-col gap-1.5 min-w-0">
+      <div className="font-semibold text-slate-800 truncate text-[15px] leading-tight">
+        {prospect.name || '—'}
+      </div>
+      {prospect.email && (
+        <a
+          href={`mailto:${prospect.email}`}
+          onClick={(e) => e.stopPropagation()}
+          className="text-xs text-primary-600 hover:underline truncate block"
+        >
+          {prospect.email}
+        </a>
+      )}
+      {prospect.company_name && (
+        <p className="text-xs text-slate-500 truncate">{prospect.company_name}</p>
+      )}
+      <div className="flex flex-wrap gap-1.5 mt-1">
+        {prospect.category && (
+          <span className="ext-badge ext-badge-slate">
+            {String(prospect.category).replace('_', '-')}
+          </span>
+        )}
+        {prospect.sources && (
+          <span className="ext-badge ext-badge-slate">{prospect.sources}</span>
+        )}
+        {prospect.status && (
+          <span className="ext-badge ext-badge-primary">
+            {String(prospect.status).replace('_', ' ')}
+          </span>
+        )}
+      </div>
+      {Array.isArray(prospect.intent_skills) && prospect.intent_skills.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-slate-100">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">Skills</span>
+          <div className="flex flex-wrap gap-1.5">
+            {prospect.intent_skills.map((skill, i) => (
+              <span key={i} className="ext-badge ext-badge-primary">
+                {skill}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {prospect.linkedin_url && (
+        <a
+          href={prospect.linkedin_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-xs text-primary-600 hover:underline mt-1 inline-flex items-center gap-0.5 truncate max-w-full"
+        >
+          LinkedIn →
+        </a>
+      )}
     </div>
-    {prospect.email && (
-      <a
-        href={`mailto:${prospect.email}`}
-        onClick={(e) => e.stopPropagation()}
-        className="text-xs text-primary-600 hover:underline truncate block"
-      >
-        {prospect.email}
-      </a>
-    )}
-    {prospect.company_name && (
-      <p className="text-xs text-slate-500 mt-1 truncate">{prospect.company_name}</p>
-    )}
-    <div className="flex flex-wrap gap-1.5 mt-2">
-      {prospect.category && (
-        <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-          {String(prospect.category).replace('_', '-')}
-        </span>
-      )}
-      {prospect.sources && (
-        <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600">
-          {prospect.sources}
-        </span>
-      )}
-      {prospect.status && (
-        <span className="text-[10px] px-2 py-0.5 rounded bg-primary-100 text-primary-700">
-          {String(prospect.status).replace('_', ' ')}
-        </span>
-      )}
-    </div>
-    {prospect.linkedin_url && (
-      <a
-        href={prospect.linkedin_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
-        className="text-xs text-primary-600 hover:underline mt-2 inline-block truncate max-w-full"
-      >
-        LinkedIn →
-      </a>
-    )}
   </button>
 );
 
@@ -82,9 +96,9 @@ const ProspectList = ({ prospects, loading, error, emptyText, onSelect }) => {
 const DetailRow = ({ label, children }) => {
   if (!children && children !== 0) return null;
   return (
-    <div className="flex flex-col gap-0.5 py-2 border-b border-slate-100 last:border-b-0">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
-      <span className="text-sm text-slate-800 break-words">{children}</span>
+    <div className="flex flex-col gap-0.5 py-2.5 border-b border-slate-100 last:border-b-0 last:pb-0 first:pt-0">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
+      <span className="text-sm text-slate-800 break-words leading-snug">{children}</span>
     </div>
   );
 };
@@ -218,7 +232,7 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
       </button>
 
       {/* Header card */}
-      <div className="rounded-xl bg-white border border-slate-200/80 p-5 shadow-sm">
+      <div className="ext-card ext-card-body">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="min-w-0">
             <h3 className="text-lg font-bold text-slate-800 truncate">{prospect.name || '—'}</h3>
@@ -261,8 +275,11 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
       </div>
 
       {/* Contact & company info */}
-      <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
-        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Contact & Company</h4>
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">Contact & Company</h4>
+        </div>
+        <div className="ext-card-body">
         <DetailRow label="Email">
           {prospect.email && (
             <a href={`mailto:${prospect.email}`} className="text-primary-600 hover:underline">{prospect.email}</a>
@@ -281,20 +298,24 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
             <a href={prospect.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">{prospect.linkedin_url}</a>
           )}
         </DetailRow>
+        </div>
       </div>
 
       {/* Intent info */}
-      <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
-        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Intent</h4>
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">Intent</h4>
+        </div>
+        <div className="ext-card-body">
         <DetailRow label="Intent Category">{prospect.intent_category}</DetailRow>
         <DetailRow label="Intent Skills">
-          {prospect.intent_skills && prospect.intent_skills.length > 0 && (
+          {prospect.intent_skills && prospect.intent_skills.length > 0 ? (
             <div className="flex flex-wrap gap-1.5 mt-0.5">
               {prospect.intent_skills.map((s, i) => (
-                <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 font-medium">{s}</span>
+                <span key={i} className="ext-badge ext-badge-primary">{s}</span>
               ))}
             </div>
-          )}
+          ) : null}
         </DetailRow>
         <DetailRow label="Intent Proof Link">
           {prospect.intent_proof_link && (
@@ -304,11 +325,12 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
         <DetailRow label="Intent Date">
           {prospect.intent_date && new Date(prospect.intent_date).toLocaleDateString()}
         </DetailRow>
+        </div>
       </div>
 
       {/* Editable fields for LH */}
-      <div className="rounded-xl bg-white border border-primary-200 p-4 shadow-sm space-y-4">
-        <h4 className="text-xs font-semibold text-primary-600 uppercase tracking-wide">Update</h4>
+      <div className="ext-card overflow-hidden border-primary-200/60 space-y-4 ext-card-body">
+        <h4 className="text-xs font-semibold text-primary-600 uppercase tracking-wider">Update</h4>
 
         {/* ── LC Phase fields ── */}
         {isLCPhase ? (
@@ -495,30 +517,42 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
 
       {/* About */}
       {prospect.about_prospect && (
-        <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
-          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">About</h4>
-          <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{prospect.about_prospect}</p>
+        <div className="ext-card overflow-hidden">
+          <div className="ext-card-header">
+            <h4 className="ext-card-header-title">About</h4>
+          </div>
+          <div className="ext-card-body">
+            <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{prospect.about_prospect}</p>
+          </div>
         </div>
       )}
 
       {/* Pitch info (if any) */}
       {(prospect.pitch_description || prospect.pitched_source || prospect.pitch_date) && (
-        <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
-          <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Pitch</h4>
+        <div className="ext-card overflow-hidden">
+          <div className="ext-card-header">
+            <h4 className="ext-card-header-title">Pitch</h4>
+          </div>
+          <div className="ext-card-body">
           <DetailRow label="Pitch Description">{prospect.pitch_description}</DetailRow>
           <DetailRow label="Pitched Source">{prospect.pitched_source}</DetailRow>
           <DetailRow label="Pitch Date">{prospect.pitch_date && new Date(prospect.pitch_date).toLocaleDateString()}</DetailRow>
           <DetailRow label="Pitch Response">{prospect.pitch_response}</DetailRow>
+          </div>
         </div>
       )}
 
       {/* Meta */}
-      <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
-        <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Details</h4>
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">Details</h4>
+        </div>
+        <div className="ext-card-body">
         <DetailRow label="Created">{prospect.created_at && new Date(prospect.created_at).toLocaleDateString()}</DetailRow>
         <DetailRow label="Last Contacted">{prospect.last_contacted_at && new Date(prospect.last_contacted_at).toLocaleDateString()}</DetailRow>
         <DetailRow label="Next Follow-up">{prospect.next_follow_up_date && new Date(prospect.next_follow_up_date).toLocaleDateString()}</DetailRow>
         <DetailRow label="Campaign">{prospect.campaign_name}</DetailRow>
+        </div>
       </div>
     </div>
   );
@@ -543,7 +577,21 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [newTabSearch, setNewTabSearch] = useState('');
+  const [newTabCategory, setNewTabCategory] = useState('');
+  const [newTabDateFrom, setNewTabDateFrom] = useState('');
+  const [newTabDateTo, setNewTabDateTo] = useState('');
+  const [newTabSkill, setNewTabSkill] = useState('');
+  const [skills, setSkills] = useState([]);
   const wasEditingRef = React.useRef(false); // tracks if user was in form (not cleared manually)
+
+  // Fetch skills for filter
+  useEffect(() => {
+    fetch(`${API_URL}/skills`)
+      .then((res) => res.ok ? res.json() : [])
+      .then((data) => setSkills(Array.isArray(data) ? data : []))
+      .catch(() => setSkills([]));
+  }, []);
 
   const fetchUserProspects = useCallback(async () => {
     if (!userId) return;
@@ -569,20 +617,25 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
     }
   }, [activeTab, fetchUserProspects]);
 
-  // After a successful save (activeProspect → null while wasEditingRef is true),
-  // refresh the list and switch to the Redefine tab.
+  // After a successful save: if NOT stay-on-new, activeProspect goes null → switch to Redefine tab.
+  // If stay-on-new, activeProspect is reloaded (never null) so we stay on New tab.
   useEffect(() => {
     if (activeProspect) {
-      // User is editing — mark that a form session is active
       wasEditingRef.current = true;
     } else if (wasEditingRef.current) {
-      // activeProspect just went to null AND we were editing (i.e. a save happened)
       wasEditingRef.current = false;
       setEditingFromTab(null);
       setActiveTab('redefine');
       fetchUserProspects();
     }
   }, [activeProspect, fetchUserProspects]);
+
+  const stayOnNewAfterSave = activeTab === 'new' || editingFromTab === 'new';
+  const handleSaveSuccess = () => {
+    setEditingFromTab('new');
+    setActiveTab('new');
+    fetchUserProspects();
+  };
 
   const handleSelectProspect = (p, fromTab) => {
     loadProspect(p);
@@ -598,6 +651,47 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
 
   // Filter prospects per tab
   const newProspects = prospects.filter((p) => p.status === 'new');
+
+  // Apply search + filters for New tab
+  const newTabSearchLower = newTabSearch.trim().toLowerCase();
+  const newProspectsFiltered = newProspects.filter((p) => {
+    // Search
+    if (newTabSearchLower) {
+      const name = (p.name || '').toLowerCase();
+      const email = (p.email || '').toLowerCase();
+      const company = (p.company_name || '').toLowerCase();
+      const category = (p.category || '').toLowerCase();
+      const source = (p.sources || '').toLowerCase();
+      const status = (p.status || '').toLowerCase();
+      const matchesSearch = name.includes(newTabSearchLower) || email.includes(newTabSearchLower) ||
+        company.includes(newTabSearchLower) || category.includes(newTabSearchLower) ||
+        source.includes(newTabSearchLower) || status.includes(newTabSearchLower);
+      if (!matchesSearch) return false;
+    }
+    // Category filter
+    if (newTabCategory && p.category !== newTabCategory) return false;
+    // Date filter (created_at)
+    if (newTabDateFrom || newTabDateTo) {
+      const createdAt = p.created_at ? new Date(p.created_at) : null;
+      if (!createdAt) return false;
+      const createdDate = new Date(createdAt.getFullYear(), createdAt.getMonth(), createdAt.getDate());
+      if (newTabDateFrom) {
+        const fromDate = new Date(newTabDateFrom);
+        if (createdDate < fromDate) return false;
+      }
+      if (newTabDateTo) {
+        const toDate = new Date(newTabDateTo);
+        if (createdDate > toDate) return false;
+      }
+    }
+    // Skill filter (intent_skills contains selected skill name)
+    if (newTabSkill) {
+      const skillNames = Array.isArray(p.intent_skills) ? p.intent_skills : [];
+      const selectedSkillName = skills.find((s) => s.id === newTabSkill)?.name || newTabSkill;
+      if (!skillNames.some((s) => (s || '').toLowerCase() === (selectedSkillName || '').toLowerCase())) return false;
+    }
+    return true;
+  });
   const redefineProspects = prospects.filter((p) => p.status === 'data_refined' && !p.lh_user_id);
   const assignedProspects = prospects.filter((p) => p.status === 'data_refined' && !!p.lh_user_id);
 
@@ -613,11 +707,14 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
           <ArrowLeft className="w-4 h-4" strokeWidth={2} />
           Back to {DC_R_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}
         </button>
-        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-sm font-medium text-slate-700">Editing Prospect</span>
-        </div>
-        <ProspectForm />
+<div className="ext-card ext-card-body py-2.5 flex flex-row items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-sm font-medium text-slate-700">Editing Prospect</span>
+              </div>
+        <ProspectForm
+          stayOnNewAfterSave={stayOnNewAfterSave}
+          onSaveSuccess={handleSaveSuccess}
+        />
       </div>
     );
   }
@@ -625,7 +722,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
   return (
     <div className="space-y-4">
       {/* Tab bar */}
-      <div className="flex rounded-lg bg-white border border-slate-200 p-1 shadow-sm">
+      <div className="ext-card ext-card-body p-1 flex">
         {DC_R_TABS.map((tab) => (
           <button
             key={tab.key}
@@ -653,7 +750,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
           {!activeProspect ? (
             <div className="space-y-4">
               {/* Create new section */}
-              <div className="rounded-xl bg-white border border-slate-200/80 p-5 shadow-sm">
+              <div className="ext-card ext-card-body">
                 <h3 className="text-base font-bold text-slate-800 mb-1.5">
                   Capture New Prospect
                 </h3>
@@ -687,28 +784,96 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
 
               {/* List of prospects with 'new' status */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-slate-800">New Prospects ({newProspects.length})</h3>
-                  <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-800">
+                    New Prospects ({newProspectsFiltered.length}
+                    {newTabSearch.trim() || newTabCategory || newTabDateFrom || newTabDateTo || newTabSkill ? ` of ${newProspects.length}` : ''})
+                  </h3>
+                  <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors shrink-0" title="Refresh">
                     <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
                   </button>
                 </div>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" strokeWidth={2} />
+                  <input
+                    type="search"
+                    placeholder="Search by name, email, company..."
+                    value={newTabSearch}
+                    onChange={(e) => setNewTabSearch(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Category</label>
+                    <select
+                      value={newTabCategory}
+                      onChange={(e) => setNewTabCategory(e.target.value)}
+                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    >
+                      <option value="">All</option>
+                      <option value="Entrepreneur">Entrepreneur</option>
+                      <option value="Subcontractor">Subcontractor</option>
+                      <option value="SME">SME</option>
+                      <option value="HR">HR</option>
+                      <option value="C_Level">C-Level</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Created (From)</label>
+                    <input
+                      type="date"
+                      value={newTabDateFrom}
+                      onChange={(e) => setNewTabDateFrom(e.target.value)}
+                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Created (To)</label>
+                    <input
+                      type="date"
+                      value={newTabDateTo}
+                      onChange={(e) => setNewTabDateTo(e.target.value)}
+                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Skill</label>
+                    <select
+                      value={newTabSkill}
+                      onChange={(e) => setNewTabSkill(e.target.value)}
+                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                    >
+                      <option value="">All</option>
+                      {skills.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <ProspectList
-                  prospects={newProspects}
+                  prospects={newProspectsFiltered}
                   loading={loading}
                   error={error}
-                  emptyText="No prospects with 'New' status."
+                  emptyText={
+                    (newTabSearch.trim() || newTabCategory || newTabDateFrom || newTabDateTo || newTabSkill)
+                      ? 'No matching prospects.'
+                      : "No prospects with 'New' status."
+                  }
                   onSelect={(p) => handleSelectProspect(p, 'new')}
                 />
               </div>
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-white border border-slate-200 shadow-sm">
+              <div className="ext-card ext-card-body py-2.5 flex flex-row items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-sm font-medium text-slate-700">Active Prospect Session</span>
               </div>
-              <ProspectForm />
+              <ProspectForm
+                stayOnNewAfterSave={stayOnNewAfterSave}
+                onSaveSuccess={handleSaveSuccess}
+              />
             </div>
           )}
         </>
@@ -961,28 +1126,30 @@ const LHTabsView = () => {
 
           {/* Summary cards */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+            <div className="ext-card ext-card-body">
               <p className="text-xs font-medium text-slate-500">Total Assigned</p>
               <p className="text-2xl font-bold text-slate-800 mt-1">{totalProspects}</p>
             </div>
-            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+            <div className="ext-card ext-card-body">
               <p className="text-xs font-medium text-slate-500">LNC</p>
               <p className="text-2xl font-bold text-red-600 mt-1">{(statusCounts['LNC'] || 0) + (statusCounts['B_LNC'] || 0)}</p>
             </div>
-            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+            <div className="ext-card ext-card-body">
               <p className="text-xs font-medium text-slate-500">LC</p>
               <p className="text-2xl font-bold text-emerald-600 mt-1">{(statusCounts['LC'] || 0) + (statusCounts['B_LC'] || 0)}</p>
             </div>
-            <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
+            <div className="ext-card ext-card-body">
               <p className="text-xs font-medium text-slate-500">Communication</p>
               <p className="text-2xl font-bold text-purple-600 mt-1">{statusCounts['COMMUNICATION'] || 0}</p>
             </div>
           </div>
 
           {/* Status breakdown */}
-          <div className="rounded-xl bg-white border border-slate-200/80 p-4 shadow-sm">
-            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Status Breakdown</h4>
-            <div className="space-y-2">
+          <div className="ext-card overflow-hidden">
+            <div className="ext-card-header">
+              <h4 className="ext-card-header-title">Status Breakdown</h4>
+            </div>
+            <div className="ext-card-body space-y-2">
               {Object.entries(statusCounts).sort((a, b) => b[1] - a[1]).map(([status, count]) => (
                 <div key={status} className="flex items-center justify-between">
                   <span className="text-sm text-slate-700">{status.replace('_', ' ')}</span>
@@ -1066,7 +1233,7 @@ const DefaultView = ({ onRequestCaptureSelection }) => {
 
   if (!activeProspect) {
     return (
-      <div className="rounded-xl bg-white border border-slate-200/80 p-6 shadow-sm">
+      <div className="ext-card ext-card-body">
         <h3 className="text-base font-bold text-slate-800 mb-1.5">
           Ready to capture prospects
         </h3>
@@ -1136,6 +1303,7 @@ const DefaultView = ({ onRequestCaptureSelection }) => {
 // ── Main OverlayPanel ───────────────────────────────────────────────
 const OverlayPanel = ({ onRequestCaptureSelection }) => {
   const { isCollapsed, setIsCollapsed, reloadDraftFromStorage, authUser, logout } = useProspect();
+  const [panelView, setPanelView] = React.useState('main'); // 'main' | 'settings'
 
   const isDCR = authUser?.role === 'DC_R';
   const isLH = authUser?.role === 'LH';
@@ -1212,7 +1380,9 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
           {/* Content */}
           <div className="flex-1 flex flex-col overflow-hidden bg-slate-100">
             <div className="flex-1 overflow-y-auto scroll-thin p-4">
-              {isDCR ? (
+              {panelView === 'settings' ? (
+                <SettingsPage onBack={() => setPanelView('main')} />
+              ) : isDCR ? (
                 <DCRTabsView onRequestCaptureSelection={onRequestCaptureSelection} />
               ) : isLH ? (
                 <LHTabsView />
@@ -1223,19 +1393,29 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
 
             {/* Footer */}
             <div className="flex-shrink-0 px-4 py-3 border-t border-slate-200 bg-white">
-              <div className="flex items-center justify-between">
-                <div className="flex flex-col text-xs text-slate-500 truncate max-w-[280px]">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-col text-xs text-slate-500 truncate min-w-0 flex-1">
                   <span className="font-medium text-slate-700 truncate">{authUser?.name || authUser?.email || '—'}</span>
                   <span className="text-[11px] text-slate-400">{authUser?.role || ''}</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={logout}
-                  title="Sign out"
-                  className="text-xs font-medium text-slate-500 hover:text-red-600 transition-colors px-2 py-1 rounded hover:bg-red-50"
-                >
-                  Sign out
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPanelView('settings')}
+                    title="Settings"
+                    className="p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    <Settings className="w-4 h-4" strokeWidth={2} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={logout}
+                    title="Sign out"
+                    className="text-xs font-medium text-slate-500 hover:text-red-600 transition-colors px-2 py-1 rounded hover:bg-red-50"
+                  >
+                    Sign out
+                  </button>
+                </div>
               </div>
             </div>
           </div>
