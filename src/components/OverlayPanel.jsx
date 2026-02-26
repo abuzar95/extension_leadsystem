@@ -18,6 +18,9 @@ const ProspectCard = ({ prospect, onClick }) => (
       <div className="font-semibold text-slate-800 truncate text-[15px] leading-tight">
         {prospect.name || '—'}
       </div>
+      {prospect.company_name && (
+        <p className="text-xs text-slate-600 truncate">{prospect.company_name}</p>
+      )}
       {prospect.email && (
         <a
           href={`mailto:${prospect.email}`}
@@ -27,13 +30,15 @@ const ProspectCard = ({ prospect, onClick }) => (
           {prospect.email}
         </a>
       )}
-      {prospect.company_name && (
-        <p className="text-xs text-slate-500 truncate">{prospect.company_name}</p>
-      )}
-      <div className="flex flex-wrap gap-1.5 mt-1">
+      <div className="flex flex-wrap gap-1.5">
         {prospect.category && (
           <span className="ext-badge ext-badge-slate">
             {String(prospect.category).replace('_', '-')}
+          </span>
+        )}
+        {prospect.lead_score != null && (
+          <span className="ext-badge bg-amber-100 text-amber-800" title="Lead score">
+            Score: {prospect.lead_score}
           </span>
         )}
         {prospect.sources && (
@@ -46,8 +51,8 @@ const ProspectCard = ({ prospect, onClick }) => (
         )}
       </div>
       {Array.isArray(prospect.intent_skills) && prospect.intent_skills.length > 0 && (
-        <div className="mt-2 pt-2 border-t border-slate-100">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1.5">Skills</span>
+        <div className="pt-1.5 border-t border-slate-100">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">Skills</span>
           <div className="flex flex-wrap gap-1.5">
             {prospect.intent_skills.map((skill, i) => (
               <span key={i} className="ext-badge ext-badge-primary">
@@ -57,17 +62,30 @@ const ProspectCard = ({ prospect, onClick }) => (
           </div>
         </div>
       )}
-      {prospect.linkedin_url && (
-        <a
-          href={prospect.linkedin_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="text-xs text-primary-600 hover:underline mt-1 inline-flex items-center gap-0.5 truncate max-w-full"
-        >
-          LinkedIn →
-        </a>
-      )}
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-1 border-t border-slate-100">
+        {prospect.linkedin_url && (
+          <a
+            href={prospect.linkedin_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-primary-600 hover:underline truncate max-w-full"
+          >
+            LinkedIn →
+          </a>
+        )}
+        {prospect.website_link && (
+          <a
+            href={prospect.website_link.startsWith('http') ? prospect.website_link : `https://${prospect.website_link}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-primary-600 hover:underline truncate max-w-full"
+          >
+            Website →
+          </a>
+        )}
+      </div>
     </div>
   </button>
 );
@@ -927,6 +945,53 @@ const LH_TABS = [
   { key: 'dashboard', label: 'Dashboard' },
 ];
 
+const LH_CATEGORIES = ['Entrepreneur', 'Subcontractor', 'SME', 'HR', 'C_Level'];
+const LH_LEAD_SCORE_OPTIONS = [
+  { value: '', label: 'Any' },
+  { value: '1-25', label: '1–25' },
+  { value: '26-50', label: '26–50' },
+  { value: '51-75', label: '51–75' },
+  { value: '76-100', label: '76–100' },
+  { value: 'no_score', label: 'No score' },
+];
+
+const applyLHFilters = (list, { search, category, skill, leadScore }, skills) => {
+  if (!list || !Array.isArray(list)) return [];
+  const searchLower = (search || '').trim().toLowerCase();
+  return list.filter((p) => {
+    if (searchLower) {
+      const name = (p.name || '').toLowerCase();
+      const email = (p.email || '').toLowerCase();
+      const company = (p.company_name || '').toLowerCase();
+      const cat = (p.category || '').toLowerCase();
+      const sources = (p.sources || '').toLowerCase();
+      const status = (p.status || '').toLowerCase();
+      const matches = name.includes(searchLower) || email.includes(searchLower) ||
+        company.includes(searchLower) || cat.includes(searchLower) ||
+        sources.includes(searchLower) || status.includes(searchLower);
+      if (!matches) return false;
+    }
+    if (category && p.category !== category) return false;
+    if (skill) {
+      const skillNames = Array.isArray(p.intent_skills) ? p.intent_skills : [];
+      const selectedName = skills.find((s) => s.id === skill)?.name || skill;
+      if (!skillNames.some((s) => (s || '').toLowerCase() === (selectedName || '').toLowerCase())) return false;
+    }
+    if (leadScore) {
+      const ls = p.lead_score;
+      if (leadScore === 'no_score') {
+        if (ls != null && ls !== '') return false;
+      } else {
+        const [min, max] = leadScore.split('-').map(Number);
+        const n = typeof ls === 'number' ? ls : Number(ls);
+        if (Number.isNaN(n)) return false;
+        if (n < min || n > max) return false;
+      }
+    }
+    return true;
+  });
+};
+
 const LHTabsView = () => {
   const {
     activeProspect, clearProspect, loadProspect, userId,
@@ -939,14 +1004,35 @@ const LHTabsView = () => {
   const [prospects, setProspects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [lhSearch, setLhSearch] = useState('');
+  const [lhCategory, setLhCategory] = useState('');
+  const [lhSkill, setLhSkill] = useState('');
+  const [lhLeadScore, setLhLeadScore] = useState('');
+  const [skills, setSkills] = useState([]);
   const wasEditingRef = React.useRef(false);
 
-  const fetchLHProspects = useCallback(async () => {
-    if (!userId) return;
+  useEffect(() => {
+    fetch(`${API_URL}/skills`)
+      .then((res) => res.ok ? res.json() : [])
+      .then((data) => setSkills(Array.isArray(data) ? data : []))
+      .catch(() => setSkills([]));
+  }, []);
+
+  const fetchLHProspects = useCallback(async (overrideTab) => {
+    const tab = overrideTab ?? activeTab;
+    if (!userId && tab !== 'lnc' && tab !== 'lc') return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/prospects/lh/${userId}`);
+      let url;
+      if (tab === 'lnc') {
+        url = `${API_URL}/prospects?status=LNC,B_LNC`;
+      } else if (tab === 'lc') {
+        url = `${API_URL}/prospects?status=LC,B_LC`;
+      } else {
+        url = `${API_URL}/prospects/lh/${userId}`;
+      }
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to load prospects');
       const data = await res.json();
       setProspects(Array.isArray(data) ? data : []);
@@ -956,7 +1042,7 @@ const LHTabsView = () => {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, activeTab]);
 
   // Fetch when switching to list tabs (including task)
   useEffect(() => {
@@ -973,7 +1059,7 @@ const LHTabsView = () => {
       wasEditingRef.current = false;
       setEditingFromTab(null);
       setActiveTab('assigned');
-      fetchLHProspects();
+      fetchLHProspects('assigned');
     }
   }, [activeProspect, fetchLHProspects]);
 
@@ -993,15 +1079,31 @@ const LHTabsView = () => {
   const lncProspects = prospects.filter((p) => p.status === 'LNC' || p.status === 'B_LNC');
   const lcProspects = prospects.filter((p) => p.status === 'LC' || p.status === 'B_LC');
 
-  // Task tab: prospects whose next_follow_up_date is today
-  const today = new Date().toISOString().slice(0, 10);
-  const taskProspects = prospects.filter((p) =>
-    p.next_follow_up_date && p.next_follow_up_date.slice(0, 10) === today
-  );
+  // Task tab: prospects whose next_follow_up_date is today (use local date to avoid timezone bugs)
+  const now = new Date();
+  const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const toLocalDateString = (dateVal) => {
+    if (!dateVal) return '';
+    const d = new Date(dateVal);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const taskProspects = prospects.filter((p) => {
+    const followUpLocal = toLocalDateString(p.next_follow_up_date);
+    return followUpLocal && followUpLocal === todayLocal;
+  });
 
-  // Stats for dashboard
-  const totalProspects = prospects.length;
-  const statusCounts = prospects.reduce((acc, p) => {
+  const lhFilters = { search: lhSearch, category: lhCategory, skill: lhSkill, leadScore: lhLeadScore };
+  const hasLhFilters = !!(lhSearch.trim() || lhCategory || lhSkill || lhLeadScore);
+
+  const assignedProspectsFiltered = applyLHFilters(assignedProspects, lhFilters, skills);
+  const lncProspectsFiltered = applyLHFilters(lncProspects, lhFilters, skills);
+  const lcProspectsFiltered = applyLHFilters(lcProspects, lhFilters, skills);
+  const taskProspectsFiltered = applyLHFilters(taskProspects, lhFilters, skills);
+
+  const prospectsFiltered = applyLHFilters(prospects, lhFilters, skills);
+  const totalProspects = prospectsFiltered.length;
+  const statusCounts = prospectsFiltered.reduce((acc, p) => {
     acc[p.status] = (acc[p.status] || 0) + 1;
     return acc;
   }, {});
@@ -1043,20 +1145,72 @@ const LHTabsView = () => {
         ))}
       </div>
 
+      {/* Filters — shared across list tabs and dashboard */}
+      {['assigned', 'lnc', 'lc', 'task', 'dashboard'].includes(activeTab) && (
+        <div className="ext-card ext-card-body space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" strokeWidth={2} />
+              <input
+                type="search"
+                placeholder="Search..."
+                value={lhSearch}
+                onChange={(e) => setLhSearch(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-2 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+            </div>
+            <select
+              value={lhCategory}
+              onChange={(e) => setLhCategory(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 min-w-0"
+              title="Category"
+            >
+              <option value="">All categories</option>
+              {LH_CATEGORIES.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <select
+              value={lhSkill}
+              onChange={(e) => setLhSkill(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 min-w-0"
+              title="Skill"
+            >
+              <option value="">All skills</option>
+              {skills.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <select
+              value={lhLeadScore}
+              onChange={(e) => setLhLeadScore(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 min-w-0"
+              title="Lead Score"
+            >
+              {LH_LEAD_SCORE_OPTIONS.map((o) => (
+                <option key={o.value || 'any'} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* Assigned tab */}
       {activeTab === 'assigned' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800">Assigned ({assignedProspects.length})</h3>
+            <h3 className="text-sm font-bold text-slate-800">
+              Assigned ({assignedProspectsFiltered.length}{hasLhFilters ? ` of ${assignedProspects.length}` : ''})
+            </h3>
             <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
-            prospects={assignedProspects}
+            prospects={assignedProspectsFiltered}
             loading={loading}
             error={error}
-            emptyText="No prospects assigned to you yet."
+            emptyText={hasLhFilters ? 'No matching prospects.' : 'No prospects assigned to you yet.'}
             onSelect={(p) => handleSelectProspect(p, 'assigned')}
           />
         </div>
@@ -1066,16 +1220,18 @@ const LHTabsView = () => {
       {activeTab === 'lnc' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800">LNC ({lncProspects.length})</h3>
+            <h3 className="text-sm font-bold text-slate-800">
+              LNC ({lncProspectsFiltered.length}{hasLhFilters ? ` of ${lncProspects.length}` : ''})
+            </h3>
             <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
-            prospects={lncProspects}
+            prospects={lncProspectsFiltered}
             loading={loading}
             error={error}
-            emptyText="No prospects in LNC status."
+            emptyText={hasLhFilters ? 'No matching prospects.' : 'No prospects in LNC status.'}
             onSelect={(p) => handleSelectProspect(p, 'lnc')}
           />
         </div>
@@ -1085,16 +1241,18 @@ const LHTabsView = () => {
       {activeTab === 'lc' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800">LC ({lcProspects.length})</h3>
+            <h3 className="text-sm font-bold text-slate-800">
+              LC ({lcProspectsFiltered.length}{hasLhFilters ? ` of ${lcProspects.length}` : ''})
+            </h3>
             <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
-            prospects={lcProspects}
+            prospects={lcProspectsFiltered}
             loading={loading}
             error={error}
-            emptyText="No prospects in LC status."
+            emptyText={hasLhFilters ? 'No matching prospects.' : 'No prospects in LC status.'}
             onSelect={(p) => handleSelectProspect(p, 'lc')}
           />
         </div>
@@ -1104,16 +1262,18 @@ const LHTabsView = () => {
       {activeTab === 'task' && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-800">Today's Follow-ups ({taskProspects.length})</h3>
+            <h3 className="text-sm font-bold text-slate-800">
+              Today&apos;s Follow-ups ({taskProspectsFiltered.length}{hasLhFilters ? ` of ${taskProspects.length}` : ''})
+            </h3>
             <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
-            prospects={taskProspects}
+            prospects={taskProspectsFiltered}
             loading={loading}
             error={error}
-            emptyText="No follow-ups scheduled for today."
+            emptyText={hasLhFilters ? 'No matching prospects.' : "No follow-ups scheduled for today."}
             onSelect={(p) => handleSelectProspect(p, 'task')}
           />
         </div>
@@ -1122,7 +1282,9 @@ const LHTabsView = () => {
       {/* Dashboard tab */}
       {activeTab === 'dashboard' && (
         <div className="space-y-4">
-          <h3 className="text-sm font-bold text-slate-800">Dashboard</h3>
+          <h3 className="text-sm font-bold text-slate-800">
+            Dashboard{hasLhFilters ? ` (${totalProspects} of ${prospects.length} shown)` : ''}
+          </h3>
 
           {/* Summary cards */}
           <div className="grid grid-cols-2 gap-3">
@@ -1379,7 +1541,7 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
 
           {/* Content */}
           <div className="flex-1 flex flex-col overflow-hidden bg-slate-100">
-            <div className="flex-1 overflow-y-auto scroll-thin p-4">
+            <div className="flex-1 overflow-y-auto scroll-thin p-4" data-scroll-container>
               {panelView === 'settings' ? (
                 <SettingsPage onBack={() => setPanelView('main')} />
               ) : isDCR ? (

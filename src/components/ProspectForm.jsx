@@ -218,16 +218,22 @@ const SkillsTagInput = ({ icon: Icon, tags, onChange, placeholder }) => {
 
 // ── LinkedIn Handler Picker (shown when status = data_refined) ───────
 const LHUserPicker = ({ intentCategory, value, onChange }) => {
+  const { authToken } = useProspect();
   const [lhUsers, setLhUsers] = useState([]);
   const [loadingLH, setLoadingLH] = useState(false);
 
-  // Fetch LH users once
+  // Fetch LH users once (requires auth)
   useEffect(() => {
+    if (!authToken) return;
     let cancelled = false;
     const fetchLH = async () => {
       setLoadingLH(true);
       try {
-        const res = await fetch(`${API_URL}/users`);
+        const res = await fetch(`${API_URL}/users`, {
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+        });
         if (res.ok) {
           const all = await res.json();
           // Only users with role LH
@@ -242,7 +248,7 @@ const LHUserPicker = ({ intentCategory, value, onChange }) => {
     };
     fetchLH();
     return () => { cancelled = true; };
-  }, []);
+  }, [authToken]);
 
   // Filter: show LH users whose linkedin_profile.niche matches the prospect's intent_category
   // Also include users whose niche is "Both" (matches everything), and if prospect intent is "Both", show all LH users
@@ -308,6 +314,9 @@ const ProspectForm = ({ stayOnNewAfterSave = false, onSaveSuccess }) => {
     if (!hasRequired) return;
     try {
       await saveProspect({ stayOnNewAndReload: stayOnNewAfterSave });
+      const scrollEl = document.querySelector('[data-scroll-container]');
+      if (scrollEl) scrollEl.scrollTo(0, 0);
+      else window.scrollTo(0, 0);
       if (stayOnNewAfterSave && typeof onSaveSuccess === 'function') {
         onSaveSuccess();
       }
