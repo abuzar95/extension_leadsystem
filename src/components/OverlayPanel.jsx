@@ -4,6 +4,7 @@ import ProspectForm from './ProspectForm';
 import { UserPlus, MousePointer2, PanelLeftClose, PanelLeft, RefreshCw, List, ArrowLeft, Loader2, Settings } from './icons';
 import { Search } from 'lucide-react';
 import SettingsPage from './SettingsPage';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
 import { API_URL } from '../config.js';
 
@@ -576,11 +577,312 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
   );
 };
 
+// ── DC_R Dashboard tab (mirrors dashboard_leadsystem /dcr page) ───────
+const STATUS_STYLE_DCR = {
+  new: { bg: '#e3f2fd', text: '#1565c0' },
+  data_refined: { bg: '#f3e5f5', text: '#7b1fa2' },
+  use_in_campaign: { bg: '#fff8e1', text: '#f57f17' },
+  pitch: { bg: '#e8f5e9', text: '#2e7d32' },
+  LNC: { bg: '#fce4ec', text: '#c62828' },
+  B_LNC: { bg: '#fbe9e7', text: '#d84315' },
+  LC: { bg: '#e0f7fa', text: '#00838f' },
+  B_LC: { bg: '#e0f2f1', text: '#00695c' },
+  COMMUNICATION: { bg: '#ede7f6', text: '#4527a0' },
+  TRASH: { bg: '#efebe9', text: '#4e342e' },
+};
+const STATUS_LABELS_DCR = {
+  new: 'New', data_refined: 'Data Refined', use_in_campaign: 'Use in Campaign', pitch: 'Pitch',
+  LNC: 'LNC', B_LNC: 'B-LNC', LC: 'LC', B_LC: 'B-LC', COMMUNICATION: 'Communication', TRASH: 'Trash',
+};
+const CHART_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4445'];
+
+const formatSource = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ') : '');
+const formatCategory = (c) => (c === 'Uncategorized' ? c : c.replace(/_/g, '-'));
+
+const DCRDashboardTab = () => {
+  const { authToken } = useProspect();
+  const [stats, setStats] = useState(null);
+  const [userActivity, setUserActivity] = useState([]);
+  const [stageConversion, setStageConversion] = useState(null);
+  const [prospectsByStage, setProspectsByStage] = useState(null);
+  const [topSources, setTopSources] = useState([]);
+  const [categoryChartData, setCategoryChartData] = useState([]);
+  const [categoryChartMinLeadScore, setCategoryChartMinLeadScore] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [categoryChartLoading, setCategoryChartLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+
+  const fetchAll = useCallback(() => {
+    setError(null);
+    Promise.all([
+      fetch(`${API_URL}/stats/dc-r`, { headers }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/stats/user-activity`, { headers }).then((r) => (r.ok ? r.json() : [])),
+      fetch(`${API_URL}/stats/stage-conversion`, { headers }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/stats/prospects-by-stage`, { headers }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/stats/top-sources?limit=3`, { headers }).then((r) => (r.ok ? r.json() : [])),
+    ])
+      .then(([dcr, ua, sc, ps, ts]) => {
+        setStats(dcr);
+        setUserActivity(Array.isArray(ua) ? ua : []);
+        setStageConversion(sc);
+        setProspectsByStage(ps);
+        setTopSources(Array.isArray(ts) ? ts : []);
+      })
+      .catch(() => setError('Failed to load stats'));
+  }, [authToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      fetch(`${API_URL}/stats/dc-r`, { headers }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/stats/user-activity`, { headers }).then((r) => (r.ok ? r.json() : [])),
+      fetch(`${API_URL}/stats/stage-conversion`, { headers }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/stats/prospects-by-stage`, { headers }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_URL}/stats/top-sources?limit=3`, { headers }).then((r) => (r.ok ? r.json() : [])),
+    ])
+      .then(([dcr, ua, sc, ps, ts]) => {
+        if (cancelled) return;
+        setStats(dcr);
+        setUserActivity(Array.isArray(ua) ? ua : []);
+        setStageConversion(sc);
+        setProspectsByStage(ps);
+        setTopSources(Array.isArray(ts) ? ts : []);
+      })
+      .catch(() => { if (!cancelled) setError('Failed to load stats'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [authToken]);
+
+  useEffect(() => {
+    const params = categoryChartMinLeadScore.trim() ? `?minLeadScore=${encodeURIComponent(categoryChartMinLeadScore.trim())}` : '';
+    setCategoryChartLoading(true);
+    fetch(`${API_URL}/stats/prospects-by-category${params}`, { headers })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setCategoryChartData(Array.isArray(d) ? d : []))
+      .catch(() => setCategoryChartData([]))
+      .finally(() => setCategoryChartLoading(false));
+  }, [categoryChartMinLeadScore, authToken]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-500" strokeWidth={2} />
+      </div>
+    );
+  }
+  if (error) {
+    return <p className="text-sm text-red-600 py-4">{error}</p>;
+  }
+
+  const cardCls = 'ext-card ext-card-body';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-slate-800">DC&R Dashboard</h3>
+        <button type="button" onClick={fetchAll} className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 transition-colors">
+          Refresh
+        </button>
+      </div>
+
+      {/* DC&R Statistics */}
+      <section>
+        <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">DC&R Statistics</h4>
+        <div className="grid grid-cols-2 gap-2">
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Total Prospects</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.totalProspects ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Today&apos;s</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.todaysProspects ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">This Week&apos;s</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.thisWeeksProspects ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Assigned Leads</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.assignedLeads ?? '—'}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* User Performance & Prospect Tracking */}
+      <section>
+        <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">User Performance & Prospect Tracking</h4>
+
+        <div className="space-y-2 mb-3">
+          <p className="text-[11px] font-medium text-slate-500">User Activity (DC&R)</p>
+          {userActivity.length === 0 ? (
+            <p className="text-xs text-slate-500 py-2">No DC&R users or data yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {userActivity.map((u) => (
+                <div key={u.userId} className={cardCls}>
+                  <p className="text-sm font-semibold text-slate-800">{u.name}</p>
+                  {u.email && <p className="text-[11px] text-slate-500 mb-1.5">{u.email}</p>}
+                  <div className="grid grid-cols-3 gap-1 text-center text-xs">
+                    <div><span className="text-slate-500 block">Today</span><span className="font-bold text-cyan-600">{u.today}</span></div>
+                    <div><span className="text-slate-500 block">Week</span><span className="font-bold text-emerald-600">{u.thisWeek}</span></div>
+                    <div><span className="text-slate-500 block">Month</span><span className="font-bold text-primary-600">{u.thisMonth}</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">LNC → LC Today</p>
+            <p className="text-lg font-bold text-slate-800">{stageConversion?.lncToLcToday ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">LNC → LC All Time</p>
+            <p className="text-lg font-bold text-slate-800">{stageConversion?.lncToLcAllTime ?? '—'}</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className={cardCls}>
+            <span className="text-xs text-slate-500">Total prospects: </span>
+            <span className="text-lg font-bold text-slate-800">{prospectsByStage?.total ?? '—'}</span>
+          </div>
+          {prospectsByStage?.byStage?.map(({ stage, count }) => (
+            <span
+              key={stage}
+              className="text-xs font-semibold px-2.5 py-1 rounded-lg"
+              style={{ background: STATUS_STYLE_DCR[stage]?.bg || '#f1f5f9', color: STATUS_STYLE_DCR[stage]?.text || '#475569' }}
+            >
+              {STATUS_LABELS_DCR[stage] || stage}: {count}
+            </span>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 gap-3">
+          <div className={cardCls}>
+            <p className="text-xs font-semibold text-slate-700 mb-2">Stage-wise prospect distribution</p>
+            {!prospectsByStage?.byStage?.length ? (
+              <p className="text-xs text-slate-500 py-6 text-center">No data</p>
+            ) : (
+              <div className="w-full h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={prospectsByStage.byStage.map((s, i) => ({ name: STATUS_LABELS_DCR[s.stage] || s.stage, value: s.count, fill: CHART_COLORS[i % CHART_COLORS.length] }))}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={70}
+                      label={({ name, value }) => `${name}: ${value}`}
+                    />
+                    <Tooltip formatter={(value) => [value ?? 0, 'Prospects']} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+          <div className={cardCls}>
+            <p className="text-xs font-semibold text-slate-700 mb-2">User-wise captured (this month)</p>
+            {userActivity.length === 0 ? (
+              <p className="text-xs text-slate-500 py-6 text-center">No data</p>
+            ) : (
+              <div className="w-full h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={userActivity.map((u) => ({ name: u.name?.length > 10 ? u.name.slice(0, 8) + '…' : u.name || '—', count: u.thisMonth }))} margin={{ top: 12, right: 12, left: 0, bottom: 20 }}>
+                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                    <Tooltip formatter={(value) => [`${value ?? 0} prospects`, 'This month']} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
+                    <Bar dataKey="count" radius={[4, 4, 0, 0]} fill="#4f46e5" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Top 3 Prospect Sources */}
+      <section className={cardCls}>
+        <p className="text-xs font-semibold text-slate-700 mb-2">Top 3 Prospect Sources</p>
+        {topSources.length === 0 ? (
+          <p className="text-xs text-slate-500 py-6 text-center">No source data yet.</p>
+        ) : (
+          <>
+            <div className="w-full h-[180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={topSources.map(({ source, count }) => ({ name: formatSource(source), count }))} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(value) => [`${value ?? 0} prospects`, 'Count']} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                    {topSources.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t border-slate-100">
+              {topSources.map(({ source, count }, i) => (
+                <div key={source || i} className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                  <span className="text-xs text-slate-600">{formatSource(source)} – {count} prospects</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* Prospects by Category */}
+      <section className={cardCls}>
+        <p className="text-xs font-semibold text-slate-700 mb-2">Prospects by Category</p>
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <label className="text-[11px] text-slate-500" htmlFor="dcr-cat-min">Min lead score:</label>
+          <input
+            id="dcr-cat-min"
+            type="number"
+            min={0}
+            max={100}
+            placeholder="Any"
+            value={categoryChartMinLeadScore}
+            onChange={(e) => setCategoryChartMinLeadScore(e.target.value)}
+            className="w-16 rounded border border-slate-200 px-2 py-1 text-xs"
+          />
+          <span className="text-[11px] text-slate-500">{categoryChartMinLeadScore.trim() ? `lead_score ≥ ${categoryChartMinLeadScore}` : 'All prospects'}</span>
+        </div>
+        {categoryChartLoading ? (
+          <p className="text-xs text-slate-500 py-6 text-center">Loading…</p>
+        ) : categoryChartData.length === 0 ? (
+          <p className="text-xs text-slate-500 py-6 text-center">No data for this filter.</p>
+        ) : (
+          <div className="w-full h-[200px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={categoryChartData.map((d) => ({ ...d, name: formatCategory(d.category) }))} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                <Tooltip formatter={(value) => [value ?? 0, 'Prospects']} labelFormatter={(l) => `Category: ${l}`} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]} fill="#4f46e5" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+};
+
 // ── DC_R Tabs component ─────────────────────────────────────────────
 const DC_R_TABS = [
   { key: 'new', label: 'New' },
   { key: 'redefine', label: 'Redefine' },
   { key: 'assigned', label: 'Assigned' },
+  { key: 'dashboard', label: 'Dashboard' },
 ];
 
 const DCRTabsView = ({ onRequestCaptureSelection }) => {
@@ -628,7 +930,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
     }
   }, [userId]);
 
-  // Fetch prospects when switching to any list tab, or when userId changes
+  // Fetch prospects when switching to any list tab (dashboard fetches its own stats)
   useEffect(() => {
     if (activeTab === 'new' || activeTab === 'redefine' || activeTab === 'assigned') {
       fetchUserProspects();
@@ -932,6 +1234,148 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
           />
         </div>
       )}
+
+      {activeTab === 'dashboard' && (
+        <DCRDashboardTab />
+      )}
+    </div>
+  );
+};
+
+// ── LH Dashboard tab (DB aggregation only) ─────────────────────────────
+const formatCategoryLH = (c) => (c === 'Uncategorized' ? c : c.replace(/_/g, '-'));
+
+const LHDashboardTab = () => {
+  const { authToken } = useProspect();
+  const [lhStats, setLhStats] = useState(null);
+  const [categoryChartData, setCategoryChartData] = useState([]);
+  const [categoryChartMinLeadScore, setCategoryChartMinLeadScore] = useState('');
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+
+  const fetchStats = useCallback(() => {
+    setError(null);
+    setStatsLoading(true);
+    fetch(`${API_URL}/stats/lh`, { headers })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setLhStats(data))
+      .catch(() => setError('Failed to load LH stats'))
+      .finally(() => setStatsLoading(false));
+  }, [authToken]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    const params = categoryChartMinLeadScore.trim() ? `?minLeadScore=${encodeURIComponent(categoryChartMinLeadScore.trim())}` : '';
+    setChartLoading(true);
+    fetch(`${API_URL}/stats/prospects-by-category${params}`, { headers })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setCategoryChartData(Array.isArray(d) ? d : []))
+      .catch(() => setCategoryChartData([]))
+      .finally(() => setChartLoading(false));
+  }, [categoryChartMinLeadScore, authToken]);
+
+  if (statsLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-500" strokeWidth={2} />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-red-600">{error}</p>
+        <button type="button" onClick={fetchStats} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white hover:bg-primary-700">
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const cardCls = 'ext-card ext-card-body';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-slate-800">Dashboard</h3>
+        <button type="button" onClick={fetchStats} className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 transition-colors">
+          Refresh
+        </button>
+      </div>
+
+      {/* Statistics (DB aggregation) */}
+      <section>
+        <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Statistics</h4>
+        <div className="grid grid-cols-2 gap-3">
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Total Assigned Prospects</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{lhStats?.totalAssignedProspects ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Total LC Prospects</p>
+            <p className="text-xl font-bold text-emerald-600 mt-0.5">{lhStats?.totalLCProspects ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Total LNC Prospects</p>
+            <p className="text-xl font-bold text-red-600 mt-0.5">{lhStats?.totalLNCProspects ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Today&apos;s Tasks</p>
+            <p className="text-xl font-bold text-primary-600 mt-0.5">{lhStats?.todaysTasks ?? '—'}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Prospects by Category (vertical bar chart, DB aggregation, optional min lead score) */}
+      <section className={cardCls}>
+        <h4 className="text-xs font-semibold text-slate-700 mb-2">Prospects by Category</h4>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <label className="text-[11px] text-slate-500" htmlFor="lh-cat-min-score">Min lead score:</label>
+          <input
+            id="lh-cat-min-score"
+            type="number"
+            min={0}
+            max={100}
+            placeholder="Any"
+            value={categoryChartMinLeadScore}
+            onChange={(e) => setCategoryChartMinLeadScore(e.target.value)}
+            className="w-16 rounded border border-slate-200 px-2 py-1 text-xs"
+            title="Only count prospects with lead_score ≥ this value"
+          />
+          <span className="text-[11px] text-slate-500">
+            {categoryChartMinLeadScore.trim() ? `lead_score ≥ ${categoryChartMinLeadScore}` : 'All prospects'}
+          </span>
+        </div>
+        {chartLoading ? (
+          <p className="text-xs text-slate-500 py-6 text-center">Loading chart…</p>
+        ) : categoryChartData.length === 0 ? (
+          <p className="text-xs text-slate-500 py-6 text-center">No data for this filter.</p>
+        ) : (
+          <div className="w-full h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={categoryChartData.map((d) => ({ ...d, name: formatCategoryLH(d.category) }))}
+                margin={{ top: 12, right: 12, left: 0, bottom: 8 }}
+              >
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                <Tooltip
+                  formatter={(value) => [value ?? 0, 'Prospects']}
+                  labelFormatter={(label) => `Category: ${label}`}
+                  contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }}
+                />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]} fill="#4f46e5" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
     </div>
   );
 };
@@ -1044,7 +1488,7 @@ const LHTabsView = () => {
     }
   }, [userId, activeTab]);
 
-  // Fetch when switching to list tabs (including task)
+  // Fetch when switching to list tabs (including task); dashboard fetches its own stats
   useEffect(() => {
     if (['assigned', 'lnc', 'lc', 'task'].includes(activeTab)) {
       fetchLHProspects();
@@ -1101,13 +1545,6 @@ const LHTabsView = () => {
   const lcProspectsFiltered = applyLHFilters(lcProspects, lhFilters, skills);
   const taskProspectsFiltered = applyLHFilters(taskProspects, lhFilters, skills);
 
-  const prospectsFiltered = applyLHFilters(prospects, lhFilters, skills);
-  const totalProspects = prospectsFiltered.length;
-  const statusCounts = prospectsFiltered.reduce((acc, p) => {
-    acc[p.status] = (acc[p.status] || 0) + 1;
-    return acc;
-  }, {});
-
   // If viewing a prospect detail from a tab
   if (activeProspect && editingFromTab) {
     return (
@@ -1145,8 +1582,8 @@ const LHTabsView = () => {
         ))}
       </div>
 
-      {/* Filters — shared across list tabs and dashboard */}
-      {['assigned', 'lnc', 'lc', 'task', 'dashboard'].includes(activeTab) && (
+      {/* Filters — shared across list tabs only (dashboard uses its own stats) */}
+      {['assigned', 'lnc', 'lc', 'task'].includes(activeTab) && (
         <div className="ext-card ext-card-body space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-0">
@@ -1281,54 +1718,7 @@ const LHTabsView = () => {
 
       {/* Dashboard tab */}
       {activeTab === 'dashboard' && (
-        <div className="space-y-4">
-          <h3 className="text-sm font-bold text-slate-800">
-            Dashboard{hasLhFilters ? ` (${totalProspects} of ${prospects.length} shown)` : ''}
-          </h3>
-
-          {/* Summary cards */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="ext-card ext-card-body">
-              <p className="text-xs font-medium text-slate-500">Total Assigned</p>
-              <p className="text-2xl font-bold text-slate-800 mt-1">{totalProspects}</p>
-            </div>
-            <div className="ext-card ext-card-body">
-              <p className="text-xs font-medium text-slate-500">LNC</p>
-              <p className="text-2xl font-bold text-red-600 mt-1">{(statusCounts['LNC'] || 0) + (statusCounts['B_LNC'] || 0)}</p>
-            </div>
-            <div className="ext-card ext-card-body">
-              <p className="text-xs font-medium text-slate-500">LC</p>
-              <p className="text-2xl font-bold text-emerald-600 mt-1">{(statusCounts['LC'] || 0) + (statusCounts['B_LC'] || 0)}</p>
-            </div>
-            <div className="ext-card ext-card-body">
-              <p className="text-xs font-medium text-slate-500">Communication</p>
-              <p className="text-2xl font-bold text-purple-600 mt-1">{statusCounts['COMMUNICATION'] || 0}</p>
-            </div>
-          </div>
-
-          {/* Status breakdown */}
-          <div className="ext-card overflow-hidden">
-            <div className="ext-card-header">
-              <h4 className="ext-card-header-title">Status Breakdown</h4>
-            </div>
-            <div className="ext-card-body space-y-2">
-              {Object.entries(statusCounts).sort((a, b) => b[1] - a[1]).map(([status, count]) => (
-                <div key={status} className="flex items-center justify-between">
-                  <span className="text-sm text-slate-700">{status.replace('_', ' ')}</span>
-                  <span className="text-sm font-semibold text-slate-800">{count}</span>
-                </div>
-              ))}
-              {Object.keys(statusCounts).length === 0 && (
-                <p className="text-sm text-slate-400">No data yet.</p>
-              )}
-            </div>
-          </div>
-
-          <button type="button" onClick={fetchLHProspects} className="w-full rounded-lg border border-slate-200 bg-white py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors inline-flex items-center justify-center gap-2">
-            <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />
-            Refresh Data
-          </button>
-        </div>
+        <LHDashboardTab />
       )}
     </div>
   );
