@@ -1318,6 +1318,8 @@ const LHDashboardTab = () => {
 
       const counts = new Map();
       for (const p of lhUserProspects) {
+        const isLCPhase = p.status === 'LC' || p.status === 'B_LC';
+        if (!isLCPhase) continue;
         if (minLeadScore != null && !Number.isNaN(minLeadScore)) {
           const ls = p.lead_score;
           if (ls == null || Number(ls) < minLeadScore) continue;
@@ -1398,7 +1400,7 @@ const LHDashboardTab = () => {
 
       {/* Prospects by Category (vertical bar chart, DB aggregation, optional min lead score) */}
       <section className={cardCls}>
-        <h4 className="text-xs font-semibold text-slate-700 mb-2">Prospects by Category</h4>
+        <h4 className="text-xs font-semibold text-slate-700 mb-2">LC Prospects by Category</h4>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <label className="text-[11px] text-slate-500" htmlFor="lh-cat-min-score">Min lead score:</label>
           <input
