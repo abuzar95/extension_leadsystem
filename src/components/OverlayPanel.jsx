@@ -1313,7 +1313,10 @@ const LHDashboardTab = () => {
         };
 
         // LH dashboard metrics must be scoped to the logged-in LH user's `lh_user_id`.
+        const totalProspectsAllTime = list.length;
         const assignedProspects = list.filter((p) => p.status === 'data_refined').length;
+        const totalLCProspectsAllTime = list.filter((p) => p.status === 'LC' || p.status === 'B_LC').length;
+        const totalLNCProspectsAllTime = list.filter((p) => p.status === 'LNC' || p.status === 'B_LNC').length;
         const lcTasksToday = list.filter((p) => {
           const isLcPhase = p.status === 'LC' || p.status === 'B_LC';
           const followUpLocal = toLocalDateString(p.next_follow_up_date);
@@ -1324,11 +1327,14 @@ const LHDashboardTab = () => {
           const followUpLocal = toLocalDateString(p.next_follow_up_date);
           return isLncPhase && followUpLocal && followUpLocal === todayLocal;
         }).length;
+        const todaysTasks = lcTasksToday + lncTasksToday;
 
         setLhStats({
+          totalProspectsAllTime,
           assignedProspects,
-          lcTasksToday,
-          lncTasksToday,
+          totalLCProspectsAllTime,
+          totalLNCProspectsAllTime,
+          todaysTasks,
         });
       })
       .catch(() => setError('Failed to load LH stats'))
@@ -1414,16 +1420,24 @@ const LHDashboardTab = () => {
         <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Statistics</h4>
         <div className="grid grid-cols-2 gap-3">
           <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Total prospects (all time)</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{lhStats?.totalProspectsAllTime ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
             <p className="text-[11px] font-medium text-slate-500">Assigned prospects</p>
             <p className="text-xl font-bold text-slate-800 mt-0.5">{lhStats?.assignedProspects ?? '—'}</p>
           </div>
           <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">Total LC tasks (today)</p>
-            <p className="text-xl font-bold text-emerald-600 mt-0.5">{lhStats?.lcTasksToday ?? '—'}</p>
+            <p className="text-[11px] font-medium text-slate-500">Total LC Prospects (all time)</p>
+            <p className="text-xl font-bold text-emerald-600 mt-0.5">{lhStats?.totalLCProspectsAllTime ?? '—'}</p>
           </div>
           <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">Total LNC tasks (today)</p>
-            <p className="text-xl font-bold text-red-600 mt-0.5">{lhStats?.lncTasksToday ?? '—'}</p>
+            <p className="text-[11px] font-medium text-slate-500">Total LNC Prospects (all time)</p>
+            <p className="text-xl font-bold text-red-600 mt-0.5">{lhStats?.totalLNCProspectsAllTime ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Today&apos;s Tasks</p>
+            <p className="text-xl font-bold text-primary-600 mt-0.5">{lhStats?.todaysTasks ?? '—'}</p>
           </div>
         </div>
       </section>
