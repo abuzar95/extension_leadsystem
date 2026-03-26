@@ -1246,39 +1246,107 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
 const formatCategoryLH = (c) => (c === 'Uncategorized' ? c : c.replace(/_/g, '-'));
 
 const LHDashboardTab = () => {
-  const { authToken } = useProspect();
+  const { authToken, userId } = useProspect();
   const [lhStats, setLhStats] = useState(null);
+  const [lhUserProspects, setLhUserProspects] = useState([]);
   const [categoryChartData, setCategoryChartData] = useState([]);
   const [categoryChartMinLeadScore, setCategoryChartMinLeadScore] = useState('');
   const [statsLoading, setStatsLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
-
   const fetchStats = useCallback(() => {
+    const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
     setError(null);
     setStatsLoading(true);
-    fetch(`${API_URL}/stats/lh`, { headers })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setLhStats(data))
+    if (!userId) {
+      setLhStats(null);
+      setLhUserProspects([]);
+      setStatsLoading(false);
+      return;
+    }
+
+    fetch(`${API_URL}/prospects/lh/${userId}`, { headers })
+      .then(async (r) => {
+        if (!r.ok) throw new Error('Failed to load LH prospects');
+        const data = await r.json();
+        const list = Array.isArray(data) ? data : [];
+        setLhUserProspects(list);
+
+        const now = new Date();
+        const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const toLocalDateString = (dateVal) => {
+          if (!dateVal) return '';
+          const d = new Date(dateVal);
+          if (Number.isNaN(d.getTime())) return '';
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+
+        // LH dashboard metrics must be scoped to the logged-in LH user's `lh_user_id`.
+        const assignedProspects = list.filter((p) => p.status === 'data_refined').length;
+        const lcTasksToday = list.filter((p) => {
+          const isLcPhase = p.status === 'LC' || p.status === 'B_LC';
+          const followUpLocal = toLocalDateString(p.next_follow_up_date);
+          return isLcPhase && followUpLocal && followUpLocal === todayLocal;
+        }).length;
+        const lncTasksToday = list.filter((p) => {
+          const isLncPhase = p.status === 'LNC' || p.status === 'B_LNC';
+          const followUpLocal = toLocalDateString(p.next_follow_up_date);
+          return isLncPhase && followUpLocal && followUpLocal === todayLocal;
+        }).length;
+
+        setLhStats({
+          assignedProspects,
+          lcTasksToday,
+          lncTasksToday,
+        });
+      })
       .catch(() => setError('Failed to load LH stats'))
       .finally(() => setStatsLoading(false));
-  }, [authToken]);
+  }, [authToken, userId]);
 
   useEffect(() => {
     fetchStats();
   }, [fetchStats]);
 
   useEffect(() => {
-    const params = categoryChartMinLeadScore.trim() ? `?minLeadScore=${encodeURIComponent(categoryChartMinLeadScore.trim())}` : '';
     setChartLoading(true);
-    fetch(`${API_URL}/stats/prospects-by-category${params}`, { headers })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d) => setCategoryChartData(Array.isArray(d) ? d : []))
-      .catch(() => setCategoryChartData([]))
-      .finally(() => setChartLoading(false));
-  }, [categoryChartMinLeadScore, authToken]);
+    try {
+      const minLeadScoreRaw = categoryChartMinLeadScore.trim();
+      const minLeadScore =
+        minLeadScoreRaw ? parseInt(minLeadScoreRaw, 10) : null;
+
+      const counts = new Map();
+      for (const p of lhUserProspects) {
+        if (minLeadScore != null && !Number.isNaN(minLeadScore)) {
+          const ls = p.lead_score;
+          if (ls == null || Number(ls) < minLeadScore) continue;
+        }
+        const category = p.category == null ? 'Uncategorized' : p.category;
+        counts.set(category, (counts.get(category) || 0) + 1);
+      }
+
+      const data = Array.from(counts.entries()).map(([category, count]) => ({
+        category,
+        count,
+      }));
+
+      // Match backend sorting: keep "Uncategorized" at the end.
+      data.sort((a, b) => (
+        a.category === 'Uncategorized'
+          ? 1
+          : b.category === 'Uncategorized'
+            ? -1
+            : String(a.category).localeCompare(String(b.category))
+      ));
+
+      setCategoryChartData(data);
+    } catch {
+      setCategoryChartData([]);
+    } finally {
+      setChartLoading(false);
+    }
+  }, [categoryChartMinLeadScore, lhUserProspects]);
 
   if (statsLoading) {
     return (
@@ -1314,20 +1382,16 @@ const LHDashboardTab = () => {
         <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Statistics</h4>
         <div className="grid grid-cols-2 gap-3">
           <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">Total Assigned Prospects</p>
-            <p className="text-xl font-bold text-slate-800 mt-0.5">{lhStats?.totalAssignedProspects ?? '—'}</p>
+            <p className="text-[11px] font-medium text-slate-500">Assigned prospects</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{lhStats?.assignedProspects ?? '—'}</p>
           </div>
           <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">Total LC Prospects</p>
-            <p className="text-xl font-bold text-emerald-600 mt-0.5">{lhStats?.totalLCProspects ?? '—'}</p>
+            <p className="text-[11px] font-medium text-slate-500">Total LC tasks (today)</p>
+            <p className="text-xl font-bold text-emerald-600 mt-0.5">{lhStats?.lcTasksToday ?? '—'}</p>
           </div>
           <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">Total LNC Prospects</p>
-            <p className="text-xl font-bold text-red-600 mt-0.5">{lhStats?.totalLNCProspects ?? '—'}</p>
-          </div>
-          <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">Today&apos;s Tasks</p>
-            <p className="text-xl font-bold text-primary-600 mt-0.5">{lhStats?.todaysTasks ?? '—'}</p>
+            <p className="text-[11px] font-medium text-slate-500">Total LNC tasks (today)</p>
+            <p className="text-xl font-bold text-red-600 mt-0.5">{lhStats?.lncTasksToday ?? '—'}</p>
           </div>
         </div>
       </section>
@@ -1464,18 +1528,15 @@ const LHTabsView = () => {
 
   const fetchLHProspects = useCallback(async (overrideTab) => {
     const tab = overrideTab ?? activeTab;
-    if (!userId && tab !== 'lnc' && tab !== 'lc') return;
+    // LH view must only show prospects linked to the logged-in LH user.
+    if (!userId) return;
     setLoading(true);
     setError(null);
     try {
       let url;
-      if (tab === 'lnc') {
-        url = `${API_URL}/prospects?status=LNC,B_LNC`;
-      } else if (tab === 'lc') {
-        url = `${API_URL}/prospects?status=LC,B_LC`;
-      } else {
-        url = `${API_URL}/prospects/lh/${userId}`;
-      }
+      // Always scope data by lh_user_id, then the existing status filters
+      // decide whether it shows up in LNC/LC/Assigned/Task tabs.
+      url = `${API_URL}/prospects/lh/${userId}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to load prospects');
       const data = await res.json();
