@@ -1135,62 +1135,70 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
                     <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
                   </button>
                 </div>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" strokeWidth={2} />
-                  <input
-                    type="search"
-                    placeholder="Search by name, email, company..."
-                    value={newTabSearch}
-                    onChange={(e) => setNewTabSearch(e.target.value)}
-                    className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                  />
-                </div>
-                <div className="grid grid-cols-1 gap-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Category</label>
-                    <select
-                      value={newTabCategory}
-                      onChange={(e) => setNewTabCategory(e.target.value)}
-                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                    >
-                      <option value="">All</option>
-                      <option value="Entrepreneur">Entrepreneur</option>
-                      <option value="Subcontractor">Subcontractor</option>
-                      <option value="SME">SME</option>
-                      <option value="HR">HR</option>
-                      <option value="C_Level">C-Level</option>
-                    </select>
+                <div className="ext-card ext-card-body border-primary-200/70 bg-primary-50/20 sticky top-2 z-10">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-primary-700">Filters</p>
+                    <span className="text-[11px] text-slate-500">Search and narrow results</span>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Created (From)</label>
-                    <input
-                      type="date"
-                      value={newTabDateFrom}
-                      onChange={(e) => setNewTabDateFrom(e.target.value)}
-                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Created (To)</label>
-                    <input
-                      type="date"
-                      value={newTabDateTo}
-                      onChange={(e) => setNewTabDateTo(e.target.value)}
-                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Skill</label>
-                    <select
-                      value={newTabSkill}
-                      onChange={(e) => setNewTabSkill(e.target.value)}
-                      className="rounded-lg border border-slate-200 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                    >
-                      <option value="">All</option>
-                      {skills.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" strokeWidth={2} />
+                      <input
+                        type="search"
+                        placeholder="Search by name, email, company..."
+                        value={newTabSearch}
+                        onChange={(e) => setNewTabSearch(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Category</label>
+                        <select
+                          value={newTabCategory}
+                          onChange={(e) => setNewTabCategory(e.target.value)}
+                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        >
+                          <option value="">All</option>
+                          <option value="Entrepreneur">Entrepreneur</option>
+                          <option value="Subcontractor">Subcontractor</option>
+                          <option value="SME">SME</option>
+                          <option value="HR">HR</option>
+                          <option value="C_Level">C-Level</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Created (From)</label>
+                        <input
+                          type="date"
+                          value={newTabDateFrom}
+                          onChange={(e) => setNewTabDateFrom(e.target.value)}
+                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Created (To)</label>
+                        <input
+                          type="date"
+                          value={newTabDateTo}
+                          onChange={(e) => setNewTabDateTo(e.target.value)}
+                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Skill</label>
+                        <select
+                          value={newTabSkill}
+                          onChange={(e) => setNewTabSkill(e.target.value)}
+                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        >
+                          <option value="">All</option>
+                          {skills.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <ProspectList
@@ -1540,6 +1548,7 @@ const LHTabsView = () => {
   const [lhCategory, setLhCategory] = useState('');
   const [lhSkill, setLhSkill] = useState('');
   const [lhLeadScore, setLhLeadScore] = useState('');
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
   const [skills, setSkills] = useState([]);
   const wasEditingRef = React.useRef(false);
 
@@ -1669,51 +1678,65 @@ const LHTabsView = () => {
 
       {/* Filters — shared across list tabs only (dashboard uses its own stats) */}
       {['assigned', 'lnc', 'lc', 'task'].includes(activeTab) && (
-        <div className="ext-card ext-card-body space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative flex-1 min-w-0">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" strokeWidth={2} />
-              <input
-                type="search"
-                placeholder="Search..."
-                value={lhSearch}
-                onChange={(e) => setLhSearch(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-2 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-              />
+        <div className="ext-card ext-card-body space-y-2 border-primary-200/70 bg-primary-50/20 sticky top-2 z-10">
+          <button
+            type="button"
+            onClick={() => setFiltersExpanded((v) => !v)}
+            className="w-full flex items-center justify-between text-left"
+            title={filtersExpanded ? 'Collapse filters' : 'Expand filters'}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary-700">Filters</p>
+            <span className="inline-flex items-center gap-2 text-[11px] text-slate-500">
+              Search and narrow results
+              <span className="text-slate-600">{filtersExpanded ? '▾' : '▸'}</span>
+            </span>
+          </button>
+          {filtersExpanded && (
+            <div className="grid grid-cols-1 gap-2">
+              <div className="relative w-full">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" strokeWidth={2} />
+                <input
+                  type="search"
+                  placeholder="Search..."
+                  value={lhSearch}
+                  onChange={(e) => setLhSearch(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-8 pr-2 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                />
+              </div>
+              <select
+                value={lhCategory}
+                onChange={(e) => setLhCategory(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                title="Category"
+              >
+                <option value="">All categories</option>
+                {LH_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <select
+                value={lhSkill}
+                onChange={(e) => setLhSkill(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                title="Skill"
+              >
+                <option value="">All skills</option>
+                {skills.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <select
+                value={lhLeadScore}
+                onChange={(e) => setLhLeadScore(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                title="Lead Score"
+              >
+                {LH_LEAD_SCORE_OPTIONS.map((o) => (
+                  <option key={o.value || 'any'} value={o.value}>{o.label}</option>
+                ))}
+              </select>
             </div>
-            <select
-              value={lhCategory}
-              onChange={(e) => setLhCategory(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 min-w-0"
-              title="Category"
-            >
-              <option value="">All categories</option>
-              {LH_CATEGORIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <select
-              value={lhSkill}
-              onChange={(e) => setLhSkill(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 min-w-0"
-              title="Skill"
-            >
-              <option value="">All skills</option>
-              {skills.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-            <select
-              value={lhLeadScore}
-              onChange={(e) => setLhLeadScore(e.target.value)}
-              className="rounded-lg border border-slate-200 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 min-w-0"
-              title="Lead Score"
-            >
-              {LH_LEAD_SCORE_OPTIONS.map((o) => (
-                <option key={o.value || 'any'} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
+          )}
         </div>
       )}
 
