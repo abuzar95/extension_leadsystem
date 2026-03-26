@@ -8,6 +8,20 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieCha
 
 import { API_URL } from '../config.js';
 
+const toLeadScoreOutOf10 = (raw) => {
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  if (Number.isNaN(n)) return null;
+  return Math.round(n * 10) / 10;
+};
+
+const fromLeadScoreOutOf10 = (outOf10) => {
+  if (outOf10 == null || outOf10 === '') return null;
+  const n = Number(outOf10);
+  if (Number.isNaN(n)) return null;
+  return Math.round(n * 10) / 10;
+};
+
 // ── Shared prospect card ────────────────────────────────────────────
 const ProspectCard = ({ prospect, onClick }) => (
   <button
@@ -39,7 +53,7 @@ const ProspectCard = ({ prospect, onClick }) => (
         )}
         {prospect.lead_score != null && (
           <span className="ext-badge bg-amber-100 text-amber-800" title="Lead score">
-            Score: {prospect.lead_score}
+            Score: {toLeadScoreOutOf10(prospect.lead_score)}
           </span>
         )}
         {prospect.sources && (
@@ -124,7 +138,9 @@ const DetailRow = ({ label, children }) => {
 
 const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
   const { authUser } = useProspect();
-  const [leadScore, setLeadScore] = useState(prospect?.lead_score ?? '');
+  const [leadScore, setLeadScore] = useState(
+    prospect?.lead_score != null ? (toLeadScoreOutOf10(prospect.lead_score) ?? '') : ''
+  );
   const [linkedinConnection, setLinkedinConnection] = useState(prospect?.linkedin_connection || 'none');
   const [linkedinProfileId, setLinkedinProfileId] = useState(prospect?.linkedin_profile_id || '');
   const [nextFollowUpDate, setNextFollowUpDate] = useState(prospect?.next_follow_up_date ? prospect.next_follow_up_date.slice(0, 10) : '');
@@ -136,7 +152,9 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
   // Reset fields when prospect changes — default profile to user's if prospect has none
   useEffect(() => {
     if (prospect) {
-      setLeadScore(prospect.lead_score ?? '');
+      setLeadScore(
+        prospect.lead_score != null ? (toLeadScoreOutOf10(prospect.lead_score) ?? '') : ''
+      );
       setLinkedinConnection(prospect.linkedin_connection || 'none');
       setLinkedinProfileId(
         prospect.linkedin_profile_id || authUser?.linkedin_profile_id || ''
@@ -198,7 +216,7 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
       if (isLCPhase) {
         // LC phase: update follow-up, lead score, pitch fields + auto-set last_contacted_at
         body = {
-          lead_score: leadScore === '' ? null : Number(leadScore),
+          lead_score: leadScore === '' ? null : fromLeadScoreOutOf10(leadScore),
           next_follow_up_date: nextFollowUpDate ? new Date(nextFollowUpDate).toISOString() : null,
           pitch_description: pitchDescription || null,
           pitched_source: pitchedSource || null,
@@ -208,7 +226,7 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
         // Assigned / LNC phase: status transition
         const newStatus = getTargetStatus();
         body = {
-          lead_score: leadScore === '' ? null : Number(leadScore),
+          lead_score: leadScore === '' ? null : fromLeadScoreOutOf10(leadScore),
           linkedin_connection: linkedinConnection,
           linkedin_profile_id: linkedinProfileId || null,
           status: newStatus,
@@ -373,10 +391,10 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
               <input
                 type="number"
                 min="0"
-                max="100"
+                max="10"
                 value={leadScore}
                 onChange={(e) => setLeadScore(e.target.value)}
-                placeholder="0 – 100"
+                placeholder="0 – 10"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
@@ -434,10 +452,10 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
               <input
                 type="number"
                 min="0"
-                max="100"
+                max="10"
                 value={leadScore}
                 onChange={(e) => setLeadScore(e.target.value)}
-                placeholder="0 – 100"
+                placeholder="0 – 10"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
@@ -657,7 +675,11 @@ const DCRDashboardTab = () => {
   }, [authToken]);
 
   useEffect(() => {
-    const params = categoryChartMinLeadScore.trim() ? `?minLeadScore=${encodeURIComponent(categoryChartMinLeadScore.trim())}` : '';
+    const minRaw = categoryChartMinLeadScore.trim();
+    const minOutOf10 = minRaw ? parseFloat(minRaw) : null;
+    const params = minOutOf10 != null && !Number.isNaN(minOutOf10)
+      ? `?minLeadScore=${encodeURIComponent(String(minOutOf10))}`
+      : '';
     setCategoryChartLoading(true);
     fetch(`${API_URL}/stats/prospects-by-category${params}`, { headers })
       .then((r) => (r.ok ? r.json() : []))
@@ -848,7 +870,7 @@ const DCRDashboardTab = () => {
             id="dcr-cat-min"
             type="number"
             min={0}
-            max={100}
+            max={10}
             placeholder="Any"
             value={categoryChartMinLeadScore}
             onChange={(e) => setCategoryChartMinLeadScore(e.target.value)}
@@ -1321,8 +1343,8 @@ const LHDashboardTab = () => {
         const isLCPhase = p.status === 'LC' || p.status === 'B_LC';
         if (!isLCPhase) continue;
         if (minLeadScore != null && !Number.isNaN(minLeadScore)) {
-          const ls = p.lead_score;
-          if (ls == null || Number(ls) < minLeadScore) continue;
+          const lsOutOf10 = p.lead_score == null ? null : Number(p.lead_score);
+          if (lsOutOf10 == null || Number(lsOutOf10) < minLeadScore) continue;
         }
         const category = p.category == null ? 'Uncategorized' : p.category;
         counts.set(category, (counts.get(category) || 0) + 1);
@@ -1407,7 +1429,7 @@ const LHDashboardTab = () => {
             id="lh-cat-min-score"
             type="number"
             min={0}
-            max={100}
+            max={10}
             placeholder="Any"
             value={categoryChartMinLeadScore}
             onChange={(e) => setCategoryChartMinLeadScore(e.target.value)}
@@ -1458,10 +1480,10 @@ const LH_TABS = [
 const LH_CATEGORIES = ['Entrepreneur', 'Subcontractor', 'SME', 'HR', 'C_Level'];
 const LH_LEAD_SCORE_OPTIONS = [
   { value: '', label: 'Any' },
-  { value: '1-25', label: '1–25' },
-  { value: '26-50', label: '26–50' },
-  { value: '51-75', label: '51–75' },
-  { value: '76-100', label: '76–100' },
+  { value: '0-2', label: '0–2' },
+  { value: '3-5', label: '3–5' },
+  { value: '6-7', label: '6–7' },
+  { value: '8-10', label: '8–10' },
   { value: 'no_score', label: 'No score' },
 ];
 
@@ -1493,9 +1515,9 @@ const applyLHFilters = (list, { search, category, skill, leadScore }, skills) =>
         if (ls != null && ls !== '') return false;
       } else {
         const [min, max] = leadScore.split('-').map(Number);
-        const n = typeof ls === 'number' ? ls : Number(ls);
-        if (Number.isNaN(n)) return false;
-        if (n < min || n > max) return false;
+        const nOutOf10 = ls == null ? null : Number(ls);
+        if (nOutOf10 == null || Number.isNaN(nOutOf10)) return false;
+        if (nOutOf10 < min || nOutOf10 > max) return false;
       }
     }
     return true;
