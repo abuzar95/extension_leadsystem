@@ -145,7 +145,6 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
   const [linkedinProfileId, setLinkedinProfileId] = useState(prospect?.linkedin_profile_id || '');
   const [nextFollowUpDate, setNextFollowUpDate] = useState(prospect?.next_follow_up_date ? prospect.next_follow_up_date.slice(0, 10) : '');
   const [pitchDescription, setPitchDescription] = useState(prospect?.pitch_description || '');
-  const [pitchedSource, setPitchedSource] = useState(prospect?.pitched_source || '');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
 
@@ -161,7 +160,6 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
       );
       setNextFollowUpDate(prospect.next_follow_up_date ? prospect.next_follow_up_date.slice(0, 10) : '');
       setPitchDescription(prospect.pitch_description || '');
-      setPitchedSource(prospect.pitched_source || '');
       setSaveMsg(null);
     }
   }, [prospect, authUser]);
@@ -219,7 +217,7 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
           lead_score: leadScore === '' ? null : fromLeadScoreOutOf10(leadScore),
           next_follow_up_date: nextFollowUpDate ? new Date(nextFollowUpDate).toISOString() : null,
           pitch_description: pitchDescription || null,
-          pitched_source: pitchedSource || null,
+          pitched_source: 'linkedin',
           last_contacted_at: new Date().toISOString(), // auto-timestamp on update
         };
       } else {
@@ -409,21 +407,6 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
                 rows={3}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
               />
-            </div>
-
-            {/* Pitched Source */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pitched Source</label>
-              <select
-                value={pitchedSource}
-                onChange={(e) => setPitchedSource(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              >
-                <option value="">— Select —</option>
-                <option value="linkedin">LinkedIn</option>
-                <option value="email">Email</option>
-                <option value="number">Number</option>
-              </select>
             </div>
 
             {/* Validation hint */}
@@ -618,75 +601,53 @@ const formatSource = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(
 const formatCategory = (c) => (c === 'Uncategorized' ? c : c.replace(/_/g, '-'));
 
 const DCRDashboardTab = () => {
-  const { authToken } = useProspect();
+  const { userId } = useProspect();
   const [stats, setStats] = useState(null);
-  const [userActivity, setUserActivity] = useState([]);
-  const [stageConversion, setStageConversion] = useState(null);
-  const [prospectsByStage, setProspectsByStage] = useState(null);
-  const [topSources, setTopSources] = useState([]);
-  const [categoryChartData, setCategoryChartData] = useState([]);
-  const [categoryChartMinLeadScore, setCategoryChartMinLeadScore] = useState('');
   const [loading, setLoading] = useState(true);
-  const [categoryChartLoading, setCategoryChartLoading] = useState(true);
   const [error, setError] = useState(null);
-
-  const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
-
-  const fetchAll = useCallback(() => {
-    setError(null);
-    Promise.all([
-      fetch(`${API_URL}/stats/dc-r`, { headers }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_URL}/stats/user-activity`, { headers }).then((r) => (r.ok ? r.json() : [])),
-      fetch(`${API_URL}/stats/stage-conversion`, { headers }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_URL}/stats/prospects-by-stage`, { headers }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_URL}/stats/top-sources?limit=3`, { headers }).then((r) => (r.ok ? r.json() : [])),
-    ])
-      .then(([dcr, ua, sc, ps, ts]) => {
-        setStats(dcr);
-        setUserActivity(Array.isArray(ua) ? ua : []);
-        setStageConversion(sc);
-        setProspectsByStage(ps);
-        setTopSources(Array.isArray(ts) ? ts : []);
-      })
-      .catch(() => setError('Failed to load stats'));
-  }, [authToken]);
-
-  useEffect(() => {
-    let cancelled = false;
+  const fetchAll = useCallback(async () => {
+    if (!userId) return;
     setLoading(true);
-    Promise.all([
-      fetch(`${API_URL}/stats/dc-r`, { headers }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_URL}/stats/user-activity`, { headers }).then((r) => (r.ok ? r.json() : [])),
-      fetch(`${API_URL}/stats/stage-conversion`, { headers }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_URL}/stats/prospects-by-stage`, { headers }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_URL}/stats/top-sources?limit=3`, { headers }).then((r) => (r.ok ? r.json() : [])),
-    ])
-      .then(([dcr, ua, sc, ps, ts]) => {
-        if (cancelled) return;
-        setStats(dcr);
-        setUserActivity(Array.isArray(ua) ? ua : []);
-        setStageConversion(sc);
-        setProspectsByStage(ps);
-        setTopSources(Array.isArray(ts) ? ts : []);
-      })
-      .catch(() => { if (!cancelled) setError('Failed to load stats'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [authToken]);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/prospects/user/${userId}`);
+      if (!res.ok) throw new Error('Failed to load prospects');
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : [];
+
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const endOfToday = new Date(startOfToday);
+      endOfToday.setDate(endOfToday.getDate() + 1);
+      const startOfWeek = new Date(startOfToday);
+      startOfWeek.setDate(startOfWeek.getDate() - 7);
+
+      const isWithinRange = (dateVal, start, end) => {
+        if (!dateVal) return false;
+        const d = new Date(dateVal);
+        if (Number.isNaN(d.getTime())) return false;
+        return d >= start && d < end;
+      };
+
+      setStats({
+        totalProspects: list.length,
+        todaysProspects: list.filter((p) => isWithinRange(p.created_at, startOfToday, endOfToday)).length,
+        thisWeeksProspects: list.filter((p) => isWithinRange(p.created_at, startOfWeek, endOfToday)).length,
+        newProspects: list.filter((p) => p.status === 'new').length,
+        dataRefinedProspects: list.filter((p) => p.status === 'data_refined').length,
+        assignedToLH: list.filter((p) => !!p.lh_user_id).length,
+      });
+    } catch (err) {
+      setError(err.message || 'Failed to load stats');
+      setStats(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
 
   useEffect(() => {
-    const minRaw = categoryChartMinLeadScore.trim();
-    const minOutOf10 = minRaw ? parseFloat(minRaw) : null;
-    const params = minOutOf10 != null && !Number.isNaN(minOutOf10)
-      ? `?minLeadScore=${encodeURIComponent(String(minOutOf10))}`
-      : '';
-    setCategoryChartLoading(true);
-    fetch(`${API_URL}/stats/prospects-by-category${params}`, { headers })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d) => setCategoryChartData(Array.isArray(d) ? d : []))
-      .catch(() => setCategoryChartData([]))
-      .finally(() => setCategoryChartLoading(false));
-  }, [categoryChartMinLeadScore, authToken]);
+    fetchAll();
+  }, [fetchAll]);
 
   if (loading) {
     return (
@@ -710,9 +671,8 @@ const DCRDashboardTab = () => {
         </button>
       </div>
 
-      {/* DC&R Statistics */}
       <section>
-        <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">DC&R Statistics</h4>
+        <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">My DC&R Statistics</h4>
         <div className="grid grid-cols-2 gap-2">
           <div className={cardCls}>
             <p className="text-[11px] font-medium text-slate-500">Total Prospects</p>
@@ -728,172 +688,17 @@ const DCRDashboardTab = () => {
           </div>
           <div className={cardCls}>
             <p className="text-[11px] font-medium text-slate-500">Assigned Leads</p>
-            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.assignedLeads ?? '—'}</p>
-          </div>
-        </div>
-      </section>
-
-      {/* User Performance & Prospect Tracking */}
-      <section>
-        <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">User Performance & Prospect Tracking</h4>
-
-        <div className="space-y-2 mb-3">
-          <p className="text-[11px] font-medium text-slate-500">User Activity (DC&R)</p>
-          {userActivity.length === 0 ? (
-            <p className="text-xs text-slate-500 py-2">No DC&R users or data yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {userActivity.map((u) => (
-                <div key={u.userId} className={cardCls}>
-                  <p className="text-sm font-semibold text-slate-800">{u.name}</p>
-                  {u.email && <p className="text-[11px] text-slate-500 mb-1.5">{u.email}</p>}
-                  <div className="grid grid-cols-3 gap-1 text-center text-xs">
-                    <div><span className="text-slate-500 block">Today</span><span className="font-bold text-cyan-600">{u.today}</span></div>
-                    <div><span className="text-slate-500 block">Week</span><span className="font-bold text-emerald-600">{u.thisWeek}</span></div>
-                    <div><span className="text-slate-500 block">Month</span><span className="font-bold text-primary-600">{u.thisMonth}</span></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">LNC → LC Today</p>
-            <p className="text-lg font-bold text-slate-800">{stageConversion?.lncToLcToday ?? '—'}</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.assignedToLH ?? '—'}</p>
           </div>
           <div className={cardCls}>
-            <p className="text-[11px] font-medium text-slate-500">LNC → LC All Time</p>
-            <p className="text-lg font-bold text-slate-800">{stageConversion?.lncToLcAllTime ?? '—'}</p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <div className={cardCls}>
-            <span className="text-xs text-slate-500">Total prospects: </span>
-            <span className="text-lg font-bold text-slate-800">{prospectsByStage?.total ?? '—'}</span>
-          </div>
-          {prospectsByStage?.byStage?.map(({ stage, count }) => (
-            <span
-              key={stage}
-              className="text-xs font-semibold px-2.5 py-1 rounded-lg"
-              style={{ background: STATUS_STYLE_DCR[stage]?.bg || '#f1f5f9', color: STATUS_STYLE_DCR[stage]?.text || '#475569' }}
-            >
-              {STATUS_LABELS_DCR[stage] || stage}: {count}
-            </span>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 gap-3">
-          <div className={cardCls}>
-            <p className="text-xs font-semibold text-slate-700 mb-2">Stage-wise prospect distribution</p>
-            {!prospectsByStage?.byStage?.length ? (
-              <p className="text-xs text-slate-500 py-6 text-center">No data</p>
-            ) : (
-              <div className="w-full h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={prospectsByStage.byStage.map((s, i) => ({ name: STATUS_LABELS_DCR[s.stage] || s.stage, value: s.count, fill: CHART_COLORS[i % CHART_COLORS.length] }))}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={70}
-                      label={({ name, value }) => `${name}: ${value}`}
-                    />
-                    <Tooltip formatter={(value) => [value ?? 0, 'Prospects']} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+            <p className="text-[11px] font-medium text-slate-500">New Prospects</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.newProspects ?? '—'}</p>
           </div>
           <div className={cardCls}>
-            <p className="text-xs font-semibold text-slate-700 mb-2">User-wise captured (this month)</p>
-            {userActivity.length === 0 ? (
-              <p className="text-xs text-slate-500 py-6 text-center">No data</p>
-            ) : (
-              <div className="w-full h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={userActivity.map((u) => ({ name: u.name?.length > 10 ? u.name.slice(0, 8) + '…' : u.name || '—', count: u.thisMonth }))} margin={{ top: 12, right: 12, left: 0, bottom: 20 }}>
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(value) => [`${value ?? 0} prospects`, 'This month']} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} fill="#4f46e5" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+            <p className="text-[11px] font-medium text-slate-500">Data Refined</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats?.dataRefinedProspects ?? '—'}</p>
           </div>
         </div>
-      </section>
-
-      {/* Top 3 Prospect Sources */}
-      <section className={cardCls}>
-        <p className="text-xs font-semibold text-slate-700 mb-2">Top 3 Prospect Sources</p>
-        {topSources.length === 0 ? (
-          <p className="text-xs text-slate-500 py-6 text-center">No source data yet.</p>
-        ) : (
-          <>
-            <div className="w-full h-[180px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topSources.map(({ source, count }) => ({ name: formatSource(source), count }))} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(value) => [`${value ?? 0} prospects`, 'Count']} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
-                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                    {topSources.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t border-slate-100">
-              {topSources.map(({ source, count }, i) => (
-                <div key={source || i} className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-                  <span className="text-xs text-slate-600">{formatSource(source)} – {count} prospects</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* Prospects by Category */}
-      <section className={cardCls}>
-        <p className="text-xs font-semibold text-slate-700 mb-2">Prospects by Category</p>
-        <div className="flex flex-wrap items-center gap-2 mb-2">
-          <label className="text-[11px] text-slate-500" htmlFor="dcr-cat-min">Min lead score:</label>
-          <input
-            id="dcr-cat-min"
-            type="number"
-            min={0}
-            max={10}
-            placeholder="Any"
-            value={categoryChartMinLeadScore}
-            onChange={(e) => setCategoryChartMinLeadScore(e.target.value)}
-            className="w-16 rounded border border-slate-200 px-2 py-1 text-xs"
-          />
-          <span className="text-[11px] text-slate-500">{categoryChartMinLeadScore.trim() ? `lead_score ≥ ${categoryChartMinLeadScore}` : 'All prospects'}</span>
-        </div>
-        {categoryChartLoading ? (
-          <p className="text-xs text-slate-500 py-6 text-center">Loading…</p>
-        ) : categoryChartData.length === 0 ? (
-          <p className="text-xs text-slate-500 py-6 text-center">No data for this filter.</p>
-        ) : (
-          <div className="w-full h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={categoryChartData.map((d) => ({ ...d, name: formatCategory(d.category) }))} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(value) => [value ?? 0, 'Prospects']} labelFormatter={(l) => `Category: ${l}`} contentStyle={{ borderRadius: 6, border: '1px solid #e2e8f0' }} />
-                <Bar dataKey="count" radius={[4, 4, 0, 0]} fill="#4f46e5" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
       </section>
     </div>
   );
@@ -921,9 +726,11 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
   const [error, setError] = useState(null);
   const [newTabSearch, setNewTabSearch] = useState('');
   const [newTabCategory, setNewTabCategory] = useState('');
+  const [newTabIntentCategory, setNewTabIntentCategory] = useState('');
   const [newTabDateFrom, setNewTabDateFrom] = useState('');
   const [newTabDateTo, setNewTabDateTo] = useState('');
   const [newTabSkill, setNewTabSkill] = useState('');
+  const [newFiltersExpanded, setNewFiltersExpanded] = useState(true);
   const [skills, setSkills] = useState([]);
   const wasEditingRef = React.useRef(false); // tracks if user was in form (not cleared manually)
 
@@ -1012,6 +819,8 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
     }
     // Category filter
     if (newTabCategory && p.category !== newTabCategory) return false;
+    // Intent category filter
+    if (newTabIntentCategory && p.intent_category !== newTabIntentCategory) return false;
     // Date filter (created_at)
     if (newTabDateFrom || newTabDateTo) {
       const createdAt = p.created_at ? new Date(p.created_at) : null;
@@ -1129,84 +938,107 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-sm font-bold text-slate-800">
                     New Prospects ({newProspectsFiltered.length}
-                    {newTabSearch.trim() || newTabCategory || newTabDateFrom || newTabDateTo || newTabSkill ? ` of ${newProspects.length}` : ''})
+                    {newTabSearch.trim() || newTabCategory || newTabIntentCategory || newTabDateFrom || newTabDateTo || newTabSkill ? ` of ${newProspects.length}` : ''})
                   </h3>
                   <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors shrink-0" title="Refresh">
                     <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
                   </button>
                 </div>
                 <div className="ext-card ext-card-body border-primary-200/70 bg-primary-50/20 sticky top-2 z-10">
-                  <div className="flex items-center justify-between mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewFiltersExpanded((v) => !v)}
+                    className="w-full flex items-center justify-between text-left mb-2"
+                    title={newFiltersExpanded ? 'Collapse filters' : 'Expand filters'}
+                  >
                     <p className="text-xs font-semibold uppercase tracking-wider text-primary-700">Filters</p>
-                    <span className="text-[11px] text-slate-500">Search and narrow results</span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" strokeWidth={2} />
-                      <input
-                        type="search"
-                        placeholder="Search by name, email, company..."
-                        value={newTabSearch}
-                        onChange={(e) => setNewTabSearch(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 gap-2">
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Category</label>
-                        <select
-                          value={newTabCategory}
-                          onChange={(e) => setNewTabCategory(e.target.value)}
-                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
-                        >
-                          <option value="">All</option>
-                          <option value="Entrepreneur">Entrepreneur</option>
-                          <option value="Subcontractor">Subcontractor</option>
-                          <option value="SME">SME</option>
-                          <option value="HR">HR</option>
-                          <option value="C_Level">C-Level</option>
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Created (From)</label>
+                    <span className="inline-flex items-center gap-2 text-[11px] text-slate-500">
+                      Search and narrow results
+                      <span className="text-slate-600">{newFiltersExpanded ? '▾' : '▸'}</span>
+                    </span>
+                  </button>
+                  {newFiltersExpanded && (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" strokeWidth={2} />
                         <input
-                          type="date"
-                          value={newTabDateFrom}
-                          onChange={(e) => setNewTabDateFrom(e.target.value)}
-                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          type="search"
+                          placeholder="Search by name, email, company..."
+                          value={newTabSearch}
+                          onChange={(e) => setNewTabSearch(e.target.value)}
+                          className="w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
                         />
                       </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Created (To)</label>
-                        <input
-                          type="date"
-                          value={newTabDateTo}
-                          onChange={(e) => setNewTabDateTo(e.target.value)}
-                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-semibold text-slate-600 uppercase">Skill</label>
-                        <select
-                          value={newTabSkill}
-                          onChange={(e) => setNewTabSkill(e.target.value)}
-                          className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
-                        >
-                          <option value="">All</option>
-                          {skills.map((s) => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
+                      <div className="grid grid-cols-1 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-semibold text-slate-600 uppercase">Category</label>
+                          <select
+                            value={newTabCategory}
+                            onChange={(e) => setNewTabCategory(e.target.value)}
+                            className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          >
+                            <option value="">All</option>
+                            <option value="Entrepreneur">Entrepreneur</option>
+                            <option value="Subcontractor">Subcontractor</option>
+                            <option value="SME">SME</option>
+                            <option value="HR">HR</option>
+                            <option value="C_Level">C-Level</option>
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-semibold text-slate-600 uppercase">Intent Category</label>
+                          <select
+                            value={newTabIntentCategory}
+                            onChange={(e) => setNewTabIntentCategory(e.target.value)}
+                            className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          >
+                            <option value="">All</option>
+                            <option value="Individual">Individual</option>
+                            <option value="Business">Business</option>
+                            <option value="Both">Both</option>
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-semibold text-slate-600 uppercase">Created (From)</label>
+                          <input
+                            type="date"
+                            value={newTabDateFrom}
+                            onChange={(e) => setNewTabDateFrom(e.target.value)}
+                            className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-semibold text-slate-600 uppercase">Created (To)</label>
+                          <input
+                            type="date"
+                            value={newTabDateTo}
+                            onChange={(e) => setNewTabDateTo(e.target.value)}
+                            className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-semibold text-slate-600 uppercase">Skill</label>
+                          <select
+                            value={newTabSkill}
+                            onChange={(e) => setNewTabSkill(e.target.value)}
+                            className="rounded-lg border border-slate-300 bg-white py-2 px-3 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          >
+                            <option value="">All</option>
+                            {skills.map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
                 <ProspectList
                   prospects={newProspectsFiltered}
                   loading={loading}
                   error={error}
                   emptyText={
-                    (newTabSearch.trim() || newTabCategory || newTabDateFrom || newTabDateTo || newTabSkill)
+                    (newTabSearch.trim() || newTabCategory || newTabIntentCategory || newTabDateFrom || newTabDateTo || newTabSkill)
                       ? 'No matching prospects.'
                       : "No prospects with 'New' status."
                   }
@@ -1317,6 +1149,7 @@ const LHDashboardTab = () => {
         const assignedProspects = list.filter((p) => p.status === 'data_refined').length;
         const totalLCProspectsAllTime = list.filter((p) => p.status === 'LC' || p.status === 'B_LC').length;
         const totalLNCProspectsAllTime = list.filter((p) => p.status === 'LNC' || p.status === 'B_LNC').length;
+        const lcNotPitchedYet = list.filter((p) => (p.status === 'LC' || p.status === 'B_LC') && !p.last_contacted_at).length;
         const lcTasksToday = list.filter((p) => {
           const isLcPhase = p.status === 'LC' || p.status === 'B_LC';
           const followUpLocal = toLocalDateString(p.next_follow_up_date);
@@ -1334,6 +1167,7 @@ const LHDashboardTab = () => {
           assignedProspects,
           totalLCProspectsAllTime,
           totalLNCProspectsAllTime,
+          lcNotPitchedYet,
           todaysTasks,
         });
       })
@@ -1439,6 +1273,10 @@ const LHDashboardTab = () => {
             <p className="text-[11px] font-medium text-slate-500">Today&apos;s Tasks</p>
             <p className="text-xl font-bold text-primary-600 mt-0.5">{lhStats?.todaysTasks ?? '—'}</p>
           </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">LC Not Pitched Yet</p>
+            <p className="text-xl font-bold text-violet-600 mt-0.5">{lhStats?.lcNotPitchedYet ?? '—'}</p>
+          </div>
         </div>
       </section>
 
@@ -1508,6 +1346,45 @@ const LH_LEAD_SCORE_OPTIONS = [
   { value: '8-10', label: '8–10' },
   { value: 'no_score', label: 'No score' },
 ];
+const LH_PITCH_STATUS_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'not_pitched', label: 'Not pitched yet' },
+];
+const EM_LEAD_SCORE_OPTIONS = [
+  { value: '', label: 'Any' },
+  { value: '0-2', label: '0–2' },
+  { value: '3-5', label: '3–5' },
+  { value: '6-7', label: '6–7' },
+  { value: '8-10', label: '8–10' },
+  { value: 'no_score', label: 'No score' },
+];
+const EM_LAST_CONTACTED_OPTIONS = [
+  { value: '', label: 'All' },
+  { value: 'contacted', label: 'Contacted' },
+  { value: 'not_contacted', label: 'Not Contacted' },
+];
+
+const hasEmailValue = (email) => (email || '').trim() !== '';
+
+const matchesEMPreference = (prospect, emType) => {
+  const intentCategory = String(prospect?.intent_category || '').toLowerCase();
+  const category = String(prospect?.category || '').toLowerCase();
+  const normalized = intentCategory || category;
+
+  if (emType === 'business') {
+    return normalized === 'business' || normalized === 'both';
+  }
+  if (emType === 'individual') {
+    return normalized === 'individual' || normalized === 'both';
+  }
+  return false;
+};
+
+const getStatusAfterEmailUpdate = (currentStatus) => {
+  if (currentStatus === 'LC') return 'B_LC';
+  if (currentStatus === 'LNC') return 'B_LNC';
+  return currentStatus;
+};
 
 const applyLHFilters = (list, { search, category, skill, leadScore }, skills) => {
   if (!list || !Array.isArray(list)) return [];
@@ -1546,6 +1423,44 @@ const applyLHFilters = (list, { search, category, skill, leadScore }, skills) =>
   });
 };
 
+const applyEMFilters = (list, { search, skill, leadScore }, skills) => {
+  if (!list || !Array.isArray(list)) return [];
+  const searchLower = (search || '').trim().toLowerCase();
+  return list.filter((p) => {
+    if (searchLower) {
+      const name = (p.name || '').toLowerCase();
+      const email = (p.email || '').toLowerCase();
+      const company = (p.company_name || '').toLowerCase();
+      const category = (p.category || '').toLowerCase();
+      const intentCategory = (p.intent_category || '').toLowerCase();
+      const source = (p.sources || '').toLowerCase();
+      const status = (p.status || '').toLowerCase();
+      const matches = name.includes(searchLower) || email.includes(searchLower) ||
+        company.includes(searchLower) || category.includes(searchLower) ||
+        intentCategory.includes(searchLower) || source.includes(searchLower) ||
+        status.includes(searchLower);
+      if (!matches) return false;
+    }
+    if (skill) {
+      const skillNames = Array.isArray(p.intent_skills) ? p.intent_skills : [];
+      const selectedName = skills.find((s) => s.id === skill)?.name || skill;
+      if (!skillNames.some((s) => (s || '').toLowerCase() === (selectedName || '').toLowerCase())) return false;
+    }
+    if (leadScore) {
+      const ls = p.lead_score_em;
+      if (leadScore === 'no_score') {
+        if (ls != null && ls !== '') return false;
+      } else {
+        const [min, max] = leadScore.split('-').map(Number);
+        const n = ls == null ? null : Number(ls);
+        if (n == null || Number.isNaN(n)) return false;
+        if (n < min || n > max) return false;
+      }
+    }
+    return true;
+  });
+};
+
 const LHTabsView = () => {
   const {
     activeProspect, clearProspect, loadProspect, userId,
@@ -1562,6 +1477,7 @@ const LHTabsView = () => {
   const [lhCategory, setLhCategory] = useState('');
   const [lhSkill, setLhSkill] = useState('');
   const [lhLeadScore, setLhLeadScore] = useState('');
+  const [lhPitchStatus, setLhPitchStatus] = useState('');
   const [filtersExpanded, setFiltersExpanded] = useState(true);
   const [skills, setSkills] = useState([]);
   const wasEditingRef = React.useRef(false);
@@ -1650,7 +1566,10 @@ const LHTabsView = () => {
 
   const assignedProspectsFiltered = applyLHFilters(assignedProspects, lhFilters, skills);
   const lncProspectsFiltered = applyLHFilters(lncProspects, lhFilters, skills);
-  const lcProspectsFiltered = applyLHFilters(lcProspects, lhFilters, skills);
+  const lcProspectsFilteredBase = applyLHFilters(lcProspects, lhFilters, skills);
+  const lcProspectsFiltered = lhPitchStatus === 'not_pitched'
+    ? lcProspectsFilteredBase.filter((p) => !p.last_contacted_at)
+    : lcProspectsFilteredBase;
   const taskProspectsFiltered = applyLHFilters(taskProspects, lhFilters, skills);
 
   // If viewing a prospect detail from a tab
@@ -1749,6 +1668,18 @@ const LHTabsView = () => {
                   <option key={o.value || 'any'} value={o.value}>{o.label}</option>
                 ))}
               </select>
+              {activeTab === 'lc' && (
+                <select
+                  value={lhPitchStatus}
+                  onChange={(e) => setLhPitchStatus(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                  title="Pitch Status"
+                >
+                  {LH_PITCH_STATUS_OPTIONS.map((o) => (
+                    <option key={o.value || 'all'} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              )}
             </div>
           )}
         </div>
@@ -1841,6 +1772,484 @@ const LHTabsView = () => {
       {/* Dashboard tab */}
       {activeTab === 'dashboard' && (
         <LHDashboardTab />
+      )}
+    </div>
+  );
+};
+
+const EMDetailCard = ({ prospect, detailTab, onBack, backLabel, onUpdated }) => {
+  const isNheDetail = detailTab === 'nhe';
+  const [email, setEmail] = useState(prospect?.email || '');
+  const [leadScoreEm, setLeadScoreEm] = useState(prospect?.lead_score_em ?? '');
+  const [pitchedDescriptionEm, setPitchedDescriptionEm] = useState(prospect?.pitched_description_em || '');
+  const [nextFollowUpEm, setNextFollowUpEm] = useState(prospect?.next_follow_up_em ? prospect.next_follow_up_em.slice(0, 10) : '');
+  const [responseEm, setResponseEm] = useState(
+    prospect?.response_em == null ? '' : (prospect.response_em ? 'true' : 'false')
+  );
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null);
+
+  useEffect(() => {
+    if (!prospect) return;
+    setEmail(prospect.email || '');
+    setLeadScoreEm(prospect.lead_score_em ?? '');
+    setPitchedDescriptionEm(prospect.pitched_description_em || '');
+    setNextFollowUpEm(prospect.next_follow_up_em ? prospect.next_follow_up_em.slice(0, 10) : '');
+    setResponseEm(prospect.response_em == null ? '' : (prospect.response_em ? 'true' : 'false'));
+    setSaveMsg(null);
+  }, [prospect]);
+
+  if (!prospect) return null;
+  const normalizedLeadScore = leadScoreEm == null ? '' : String(leadScoreEm).trim();
+  const leadScoreNum = normalizedLeadScore === '' ? NaN : Number(normalizedLeadScore);
+  const hasValidLeadScore = normalizedLeadScore !== '' && !Number.isNaN(leadScoreNum) && leadScoreNum >= 0 && leadScoreNum <= 10;
+  const hasValidPitchDescription = (pitchedDescriptionEm || '').trim() !== '';
+  const hasValidNextFollowUp = (nextFollowUpEm || '').trim() !== '';
+  const hasRequiredEmFields = hasValidLeadScore && hasValidPitchDescription && hasValidNextFollowUp;
+
+  const handleSave = async (override = {}) => {
+    if (!isNheDetail && !hasRequiredEmFields) {
+      setSaveMsg({ type: 'error', text: 'Fill required EM fields first' });
+      return;
+    }
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const payload = {
+        lead_score_em: leadScoreEm === '' ? null : Number(leadScoreEm),
+        pitched_description_em: pitchedDescriptionEm.trim() ? pitchedDescriptionEm.trim() : null,
+        next_follow_up_em: nextFollowUpEm ? new Date(nextFollowUpEm).toISOString() : null,
+        response_em: responseEm === '' ? null : responseEm === 'true',
+        ...override,
+      };
+      const res = await fetch(`${API_URL}/prospects/${prospect.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      setSaveMsg({ type: 'success', text: 'Saved' });
+      if (typeof onUpdated === 'function') onUpdated();
+    } catch (err) {
+      setSaveMsg({ type: 'error', text: err.message || 'Error saving' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+      >
+        <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+        {backLabel || 'Back'}
+      </button>
+
+      <div className="ext-card ext-card-body">
+        <h3 className="text-lg font-bold text-slate-800">{prospect.name || '—'}</h3>
+        <p className="text-sm text-slate-500">{prospect.company_name || '—'}</p>
+      </div>
+
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header"><h4 className="ext-card-header-title">Basic Info</h4></div>
+        <div className="ext-card-body">
+          <DetailRow label="Email">{prospect.email || '—'}</DetailRow>
+          <DetailRow label="Website">
+            {prospect.website_link && (
+              <a href={prospect.website_link.startsWith('http') ? prospect.website_link : `https://${prospect.website_link}`} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">
+                {prospect.website_link}
+              </a>
+            )}
+          </DetailRow>
+          <DetailRow label="LinkedIn">
+            {prospect.linkedin_url && (
+              <a href={prospect.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">
+                {prospect.linkedin_url}
+              </a>
+            )}
+          </DetailRow>
+          <DetailRow label="Intent Proof Link">
+            {prospect.intent_proof_link && (
+              <a href={prospect.intent_proof_link} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">
+                {prospect.intent_proof_link}
+              </a>
+            )}
+          </DetailRow>
+          <DetailRow label="Intent Skills">
+            {Array.isArray(prospect.intent_skills) && prospect.intent_skills.length > 0 ? prospect.intent_skills.join(', ') : '—'}
+          </DetailRow>
+          <DetailRow label="Category">{prospect.category || '—'}</DetailRow>
+          <DetailRow label="Intent Category">{prospect.intent_category || '—'}</DetailRow>
+          <DetailRow label="Status">{prospect.status || '—'}</DetailRow>
+          <DetailRow label="Source">{prospect.sources || '—'}</DetailRow>
+          <DetailRow label="Last Contacted (EM)">{prospect.last_contacted_at_em && new Date(prospect.last_contacted_at_em).toLocaleDateString()}</DetailRow>
+        </div>
+      </div>
+
+      {isNheDetail ? (
+        <div className="ext-card overflow-hidden border-primary-200/60 space-y-4 ext-card-body">
+          <h4 className="text-xs font-semibold text-primary-600 uppercase tracking-wider">NHE Update</h4>
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Add email address"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => handleSave({ email: email.trim() || null, status: getStatusAfterEmailUpdate(prospect.status) })}
+            disabled={saving}
+            className="w-full rounded-lg bg-primary-600 py-2 text-xs font-semibold text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Update Email'}
+          </button>
+          {saveMsg && (
+            <p className={`text-xs font-medium text-center ${saveMsg.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>
+              {saveMsg.text}
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="ext-card overflow-hidden border-primary-200/60 space-y-4 ext-card-body">
+          <h4 className="text-xs font-semibold text-primary-600 uppercase tracking-wider">EM Update</h4>
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Lead Score (EM) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="10"
+              value={leadScoreEm}
+              onChange={(e) => setLeadScoreEm(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Pitched Description (EM) <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={pitchedDescriptionEm}
+              onChange={(e) => setPitchedDescriptionEm(e.target.value)}
+              rows={3}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Next Follow-up (EM) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="date"
+              value={nextFollowUpEm}
+              onChange={(e) => setNextFollowUpEm(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Response (EM)</label>
+            <select
+              value={responseEm}
+              onChange={(e) => setResponseEm(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            >
+              <option value="">Not set</option>
+              <option value="true">Yes</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => handleSave({ last_contacted_at_em: new Date().toISOString() })}
+              disabled={saving || !hasRequiredEmFields}
+              className="rounded-lg border border-slate-300 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Mark Contacted
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSave()}
+              disabled={saving || !hasRequiredEmFields}
+              className="rounded-lg bg-primary-600 py-2 text-xs font-semibold text-white hover:bg-primary-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save Changes'}
+            </button>
+          </div>
+          {!hasRequiredEmFields && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5">
+              <p className="text-xs font-semibold text-amber-700 mb-1">Required to save:</p>
+              {!hasValidLeadScore && <p className="text-xs text-amber-600">• Lead Score (EM) between 0 and 10</p>}
+              {!hasValidPitchDescription && <p className="text-xs text-amber-600">• Pitched Description (EM)</p>}
+              {!hasValidNextFollowUp && <p className="text-xs text-amber-600">• Next Follow-up (EM)</p>}
+            </div>
+          )}
+
+          {saveMsg && (
+            <p className={`text-xs font-medium text-center ${saveMsg.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>
+              {saveMsg.text}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const EM_TABS = [
+  { key: 'nhe', label: 'NHE' },
+  { key: 'he', label: 'HE' },
+  { key: 'task', label: 'Task' },
+  { key: 'dashboard', label: 'Dashboard' },
+];
+
+const EMTabsView = () => {
+  const {
+    activeProspect, clearProspect, loadProspect, authUser,
+    panelActiveTab, setPanelActiveTab, panelEditingFromTab, setPanelEditingFromTab,
+  } = useProspect();
+  const activeTab = panelActiveTab && EM_TABS.some((t) => t.key === panelActiveTab) ? panelActiveTab : 'nhe';
+  const [prospects, setProspects] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [emSearch, setEmSearch] = useState('');
+  const [emSkill, setEmSkill] = useState('');
+  const [emLeadScore, setEmLeadScore] = useState('');
+  const [emHeLastContacted, setEmHeLastContacted] = useState('');
+  const [emFiltersExpanded, setEmFiltersExpanded] = useState(true);
+  const [skills, setSkills] = useState([]);
+
+  const fetchEMProspects = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/prospects`);
+      if (!res.ok) throw new Error('Failed to load prospects');
+      const data = await res.json();
+      setProspects(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || 'Error loading prospects');
+      setProspects([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (['nhe', 'he', 'task'].includes(activeTab)) fetchEMProspects();
+  }, [activeTab, fetchEMProspects]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/skills`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setSkills(Array.isArray(data) ? data : []))
+      .catch(() => setSkills([]));
+  }, []);
+
+  const emType = authUser?.em_prospect_type || null;
+  const categoryMatched = prospects.filter((p) => matchesEMPreference(p, emType));
+  const nheProspectsBase = categoryMatched.filter((p) => !hasEmailValue(p.email));
+  const heProspectsBase = categoryMatched.filter((p) => hasEmailValue(p.email));
+  const todayLocal = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  })();
+  const tasksProspectsBase = categoryMatched.filter((p) => {
+    if (!p.next_follow_up_em) return false;
+    const d = new Date(p.next_follow_up_em);
+    if (Number.isNaN(d.getTime())) return false;
+    const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return local === todayLocal;
+  });
+  const emFilters = { search: emSearch, skill: emSkill, leadScore: emLeadScore };
+  const hasEmFilters = !!(emSearch.trim() || emSkill || emLeadScore || (activeTab === 'he' && emHeLastContacted));
+  const nheProspects = applyEMFilters(nheProspectsBase, emFilters, skills);
+  const heProspectsFilteredBase = applyEMFilters(heProspectsBase, emFilters, skills);
+  const heProspects = emHeLastContacted === 'contacted'
+    ? heProspectsFilteredBase.filter((p) => !!p.last_contacted_at_em)
+    : emHeLastContacted === 'not_contacted'
+      ? heProspectsFilteredBase.filter((p) => !p.last_contacted_at_em)
+      : heProspectsFilteredBase;
+  const tasksProspects = applyEMFilters(tasksProspectsBase, emFilters, skills);
+  const pitchedCount = categoryMatched.filter((p) => !!p.last_contacted_at_em).length;
+
+  const handleSelectProspect = (p, fromTab) => {
+    loadProspect(p);
+    setPanelEditingFromTab(fromTab);
+  };
+
+  if (activeProspect && panelEditingFromTab) {
+    return (
+      <EMDetailCard
+        prospect={activeProspect}
+        detailTab={panelEditingFromTab}
+        onBack={() => {
+          clearProspect();
+          setPanelEditingFromTab(null);
+        }}
+        backLabel={`Back to ${EM_TABS.find((t) => t.key === panelEditingFromTab)?.label || 'list'}`}
+        onUpdated={fetchEMProspects}
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex rounded-lg bg-white border border-slate-200 p-1 shadow-sm">
+        {EM_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => {
+              clearProspect();
+              setPanelEditingFromTab(null);
+              setPanelActiveTab(tab.key);
+            }}
+            className={`flex-1 py-2 px-1.5 rounded-md text-xs font-semibold transition-colors ${
+              activeTab === tab.key ? 'bg-primary-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {!emType && (
+        <div className="ext-card ext-card-body">
+          <p className="text-sm text-amber-700">No EM prospect type configured. Ask admin to set your EM type.</p>
+        </div>
+      )}
+
+      {['nhe', 'he', 'task'].includes(activeTab) && (
+        <div className="ext-card ext-card-body space-y-2 border-primary-200/70 bg-primary-50/20 sticky top-2 z-10">
+          <button
+            type="button"
+            onClick={() => setEmFiltersExpanded((v) => !v)}
+            className="w-full flex items-center justify-between text-left"
+            title={emFiltersExpanded ? 'Collapse filters' : 'Expand filters'}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary-700">Filters</p>
+            <span className="inline-flex items-center gap-2 text-[11px] text-slate-500">
+              Search and narrow results
+              <span className="text-slate-600">{emFiltersExpanded ? '▾' : '▸'}</span>
+            </span>
+          </button>
+          {emFiltersExpanded && (
+            <div className="grid grid-cols-1 gap-2">
+              <div className="relative w-full">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" strokeWidth={2} />
+                <input
+                  type="search"
+                  placeholder="Search..."
+                  value={emSearch}
+                  onChange={(e) => setEmSearch(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-8 pr-2 text-sm text-slate-800 placeholder-slate-400 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                />
+              </div>
+              <select
+                value={emSkill}
+                onChange={(e) => setEmSkill(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                title="Skill"
+              >
+                <option value="">All skills</option>
+                {skills.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <select
+                value={emLeadScore}
+                onChange={(e) => setEmLeadScore(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                title="Lead Score (EM)"
+              >
+                {EM_LEAD_SCORE_OPTIONS.map((o) => (
+                  <option key={o.value || 'any'} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              {activeTab === 'he' && (
+                <select
+                  value={emHeLastContacted}
+                  onChange={(e) => setEmHeLastContacted(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                  title="Last Contacted (EM)"
+                >
+                  {EM_LAST_CONTACTED_OPTIONS.map((o) => (
+                    <option key={o.value || 'all'} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'nhe' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">
+              NHE ({nheProspects.length}{hasEmFilters ? ` of ${nheProspectsBase.length}` : ''})
+            </h3>
+            <button type="button" onClick={fetchEMProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList prospects={nheProspects} loading={loading} error={error} emptyText={hasEmFilters ? 'No matching prospects.' : 'No prospects without email.'} onSelect={(p) => handleSelectProspect(p, 'nhe')} />
+        </div>
+      )}
+
+      {activeTab === 'he' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">
+              HE ({heProspects.length}{hasEmFilters ? ` of ${heProspectsBase.length}` : ''})
+            </h3>
+            <button type="button" onClick={fetchEMProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList prospects={heProspects} loading={loading} error={error} emptyText={hasEmFilters ? 'No matching prospects.' : 'No prospects with email.'} onSelect={(p) => handleSelectProspect(p, 'he')} />
+        </div>
+      )}
+
+      {activeTab === 'task' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800">
+              Today&apos;s Tasks ({tasksProspects.length}{hasEmFilters ? ` of ${tasksProspectsBase.length}` : ''})
+            </h3>
+            <button type="button" onClick={fetchEMProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
+            </button>
+          </div>
+          <ProspectList prospects={tasksProspects} loading={loading} error={error} emptyText={hasEmFilters ? 'No matching prospects.' : 'No follow-ups scheduled for today.'} onSelect={(p) => handleSelectProspect(p, 'task')} />
+        </div>
+      )}
+
+      {activeTab === 'dashboard' && (
+        <div className="space-y-3">
+          <div className="ext-card ext-card-body">
+            <p className="text-[11px] font-medium text-slate-500">Total prospects without email</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{nheProspects.length}</p>
+          </div>
+          <div className="ext-card ext-card-body">
+            <p className="text-[11px] font-medium text-slate-500">Total prospects with email</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{heProspects.length}</p>
+          </div>
+          <div className="ext-card ext-card-body">
+            <p className="text-[11px] font-medium text-slate-500">Total pitched prospects</p>
+            <p className="text-xl font-bold text-primary-600 mt-0.5">{pitchedCount}</p>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1981,6 +2390,7 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
 
   const isDCR = authUser?.role === 'DC_R';
   const isLH = authUser?.role === 'LH';
+  const isEM = authUser?.role === 'EM';
 
   // Notify parent (content script) so it can hide iframe and show transparent tab when collapsed
   React.useEffect(() => {
@@ -2060,6 +2470,8 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
                 <DCRTabsView onRequestCaptureSelection={onRequestCaptureSelection} />
               ) : isLH ? (
                 <LHTabsView />
+              ) : isEM ? (
+                <EMTabsView />
               ) : (
                 <DefaultView onRequestCaptureSelection={onRequestCaptureSelection} />
               )}
