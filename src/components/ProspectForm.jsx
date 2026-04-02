@@ -313,12 +313,12 @@ const ProspectForm = ({ stayOnNewAfterSave = false, onSaveSuccess }) => {
   const handleSave = async () => {
     if (!hasRequired) return;
     try {
-      await saveProspect({ stayOnNewAndReload: stayOnNewAfterSave });
+      const savedProspect = await saveProspect({ stayOnNewAndReload: stayOnNewAfterSave });
       const scrollEl = document.querySelector('[data-scroll-container]');
       if (scrollEl) scrollEl.scrollTo(0, 0);
       else window.scrollTo(0, 0);
-      if (stayOnNewAfterSave && typeof onSaveSuccess === 'function') {
-        onSaveSuccess();
+      if (typeof onSaveSuccess === 'function') {
+        onSaveSuccess(savedProspect);
       }
     } catch (error) {
       alert('Error saving prospect: ' + error.message);

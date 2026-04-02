@@ -7,6 +7,26 @@ import SettingsPage from './SettingsPage';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
 import { API_URL } from '../config.js';
+import {
+  getAllProspectsFromDb,
+  replaceAllProspectsInDb,
+  upsertProspectInDb,
+  getMetaValue,
+  setMetaValue,
+} from '../utils/prospectIndexedDb.js';
+
+const LAST_SYNC_META_KEY = 'prospects_last_sync_at';
+const SYNC_THRESHOLD_MS = 30 * 60 * 1000;
+const PKT_TIMEZONE = 'Asia/Karachi';
+const PKT_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: PKT_TIMEZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const PKT_DISPLAY_FORMATTER = new Intl.DateTimeFormat('en-GB', {
+  timeZone: PKT_TIMEZONE,
+});
 
 const toLeadScoreOutOf10 = (raw) => {
   if (raw == null || raw === '') return null;
@@ -22,8 +42,99 @@ const fromLeadScoreOutOf10 = (outOf10) => {
   return Math.round(n * 10) / 10;
 };
 
+const toPktDayKey = (dateVal) => {
+  if (!dateVal) return null;
+  const d = new Date(dateVal);
+  if (Number.isNaN(d.getTime())) return null;
+  return PKT_DAY_FORMATTER.format(d);
+};
+
+const formatPktDate = (dateVal) => {
+  const dayKey = toPktDayKey(dateVal);
+  if (!dayKey) return null;
+  const d = new Date(dateVal);
+  return PKT_DISPLAY_FORMATTER.format(d);
+};
+
+const getOverdueDays = (dateVal) => {
+  const followUpDay = toPktDayKey(dateVal);
+  const todayDay = toPktDayKey(new Date());
+  if (!followUpDay || !todayDay || followUpDay >= todayDay) return 0;
+  const followUpUtc = Date.parse(`${followUpDay}T00:00:00Z`);
+  const todayUtc = Date.parse(`${todayDay}T00:00:00Z`);
+  if (!Number.isFinite(followUpUtc) || !Number.isFinite(todayUtc)) return 0;
+  return Math.floor((todayUtc - followUpUtc) / (24 * 60 * 60 * 1000));
+};
+
+const getProspectSyncEndpoint = (role, userId) => {
+  if (role === 'DC_R' && userId) return `${API_URL}/prospects/user/${userId}`;
+  if (role === 'LH' && userId) return `${API_URL}/prospects/lh/${userId}`;
+  return `${API_URL}/prospects`;
+};
+
+const upsertProspectInList = (list, prospect) => {
+  if (!prospect || !prospect.id) return Array.isArray(list) ? list : [];
+  const src = Array.isArray(list) ? list : [];
+  const idx = src.findIndex((p) => p.id === prospect.id);
+  if (idx === -1) return [prospect, ...src];
+  const next = [...src];
+  next[idx] = prospect;
+  return next;
+};
+
+const normalizeExternalUrl = (url) => {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+};
+
+const ProspectExternalLink = ({ prospect, href, className = '', children, onClick, ...props }) => {
+  const { rememberProspectContext } = useProspect();
+  const normalizedHref = normalizeExternalUrl(href);
+
+  if (!normalizedHref) return null;
+
+  return (
+    <a
+      href={normalizedHref}
+      onClick={(e) => {
+        onClick?.(e);
+        if (!e.defaultPrevented) rememberProspectContext(prospect);
+      }}
+      className={className}
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    >
+      {children}
+    </a>
+  );
+};
+
+const ProspectMailLink = ({ prospect, email, className = '', children, onClick, ...props }) => {
+  const { rememberProspectContext } = useProspect();
+  const normalizedEmail = typeof email === 'string' ? email.trim() : '';
+
+  if (!normalizedEmail) return null;
+
+  return (
+    <a
+      href={`mailto:${normalizedEmail}`}
+      onClick={(e) => {
+        onClick?.(e);
+        if (!e.defaultPrevented) rememberProspectContext(prospect);
+      }}
+      className={className}
+      {...props}
+    >
+      {children}
+    </a>
+  );
+};
+
 // ── Shared prospect card ────────────────────────────────────────────
-const ProspectCard = ({ prospect, onClick }) => (
+const ProspectCard = ({ prospect, onClick, dueLabel = null }) => (
   <button
     type="button"
     onClick={onClick}
@@ -37,13 +148,14 @@ const ProspectCard = ({ prospect, onClick }) => (
         <p className="text-xs text-slate-600 truncate">{prospect.company_name}</p>
       )}
       {prospect.email && (
-        <a
-          href={`mailto:${prospect.email}`}
+        <ProspectMailLink
+          prospect={prospect}
+          email={prospect.email}
           onClick={(e) => e.stopPropagation()}
           className="text-xs text-primary-600 hover:underline truncate block"
         >
           {prospect.email}
-        </a>
+        </ProspectMailLink>
       )}
       <div className="flex flex-wrap gap-1.5">
         {prospect.category && (
@@ -77,28 +189,43 @@ const ProspectCard = ({ prospect, onClick }) => (
           </div>
         </div>
       )}
+      {dueLabel && (
+        <div className="pt-1 border-t border-slate-100">
+          <span className="inline-flex items-center rounded-md bg-rose-100 text-rose-700 px-2 py-0.5 text-[10px] font-semibold">
+            {dueLabel}
+          </span>
+        </div>
+      )}
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-1 border-t border-slate-100">
         {prospect.linkedin_url && (
-          <a
+          <ProspectExternalLink
+            prospect={prospect}
             href={prospect.linkedin_url}
-            target="_blank"
-            rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
             className="text-xs text-primary-600 hover:underline truncate max-w-full"
           >
             LinkedIn →
-          </a>
+          </ProspectExternalLink>
         )}
         {prospect.website_link && (
-          <a
-            href={prospect.website_link.startsWith('http') ? prospect.website_link : `https://${prospect.website_link}`}
-            target="_blank"
-            rel="noopener noreferrer"
+          <ProspectExternalLink
+            prospect={prospect}
+            href={prospect.website_link}
             onClick={(e) => e.stopPropagation()}
             className="text-xs text-primary-600 hover:underline truncate max-w-full"
           >
             Website →
-          </a>
+          </ProspectExternalLink>
+        )}
+        {prospect.intent_proof_link && (
+          <ProspectExternalLink
+            prospect={prospect}
+            href={prospect.intent_proof_link}
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-primary-600 hover:underline truncate max-w-full"
+          >
+            Intent Proof →
+          </ProspectExternalLink>
         )}
       </div>
     </div>
@@ -106,7 +233,7 @@ const ProspectCard = ({ prospect, onClick }) => (
 );
 
 // ── Prospect list (reusable) ────────────────────────────────────────
-const ProspectList = ({ prospects, loading, error, emptyText, onSelect }) => {
+const ProspectList = ({ prospects, loading, error, emptyText, onSelect, getDueLabel }) => {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -119,7 +246,12 @@ const ProspectList = ({ prospects, loading, error, emptyText, onSelect }) => {
   return (
     <div className="space-y-3">
       {prospects.map((p) => (
-        <ProspectCard key={p.id} prospect={p} onClick={() => onSelect(p)} />
+        <ProspectCard
+          key={p.id}
+          prospect={p}
+          dueLabel={typeof getDueLabel === 'function' ? getDueLabel(p) : null}
+          onClick={() => onSelect(p)}
+        />
       ))}
     </div>
   );
@@ -132,6 +264,146 @@ const DetailRow = ({ label, children }) => {
     <div className="flex flex-col gap-0.5 py-2.5 border-b border-slate-100 last:border-b-0 last:pb-0 first:pt-0">
       <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
       <span className="text-sm text-slate-800 break-words leading-snug">{children}</span>
+    </div>
+  );
+};
+
+const DCRDetailCard = ({ prospect, onBack, backLabel }) => {
+  if (!prospect) return null;
+
+  const statusLabel = prospect.status ? String(prospect.status).replace(/_/g, ' ') : '—';
+
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-800"
+      >
+        <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+        {backLabel || 'Back'}
+      </button>
+
+      <div className="ext-card ext-card-body">
+        <h3 className="text-lg font-bold text-slate-800">{prospect.name || '—'}</h3>
+        <p className="text-sm text-slate-500">{prospect.company_name || '—'}</p>
+      </div>
+
+      {(prospect.website_link || prospect.linkedin_url || prospect.intent_proof_link) && (
+        <div className="ext-card overflow-hidden">
+          <div className="ext-card-body py-2.5">
+            <div className="flex flex-wrap gap-2">
+              {prospect.website_link && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.website_link}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Website
+                </ProspectExternalLink>
+              )}
+              {prospect.linkedin_url && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.linkedin_url}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  LinkedIn
+                </ProspectExternalLink>
+              )}
+              {prospect.intent_proof_link && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.intent_proof_link}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Intent Proof
+                </ProspectExternalLink>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">Basic Info</h4>
+        </div>
+        <div className="ext-card-body">
+          <DetailRow label="Email">{prospect.email || '—'}</DetailRow>
+          <DetailRow label="Job Title">{prospect.job_title || '—'}</DetailRow>
+          <DetailRow label="Website">
+            {prospect.website_link ? (
+              <ProspectExternalLink
+                prospect={prospect}
+                href={prospect.website_link}
+                className="text-primary-600 hover:underline truncate block"
+              >
+                {prospect.website_link}
+              </ProspectExternalLink>
+            ) : '—'}
+          </DetailRow>
+          <DetailRow label="LinkedIn">
+            {prospect.linkedin_url ? (
+              <ProspectExternalLink
+                prospect={prospect}
+                href={prospect.linkedin_url}
+                className="text-primary-600 hover:underline truncate block"
+              >
+                {prospect.linkedin_url}
+              </ProspectExternalLink>
+            ) : '—'}
+          </DetailRow>
+          <DetailRow label="Intent Proof Link">
+            {prospect.intent_proof_link ? (
+              <ProspectExternalLink
+                prospect={prospect}
+                href={prospect.intent_proof_link}
+                className="text-primary-600 hover:underline truncate block"
+              >
+                {prospect.intent_proof_link}
+              </ProspectExternalLink>
+            ) : '—'}
+          </DetailRow>
+          <DetailRow label="Intent Skills">
+            {Array.isArray(prospect.intent_skills) && prospect.intent_skills.length > 0 ? prospect.intent_skills.join(', ') : '—'}
+          </DetailRow>
+          <DetailRow label="Category">{prospect.category || '—'}</DetailRow>
+          <DetailRow label="Intent Category">{prospect.intent_category || '—'}</DetailRow>
+          <DetailRow label="Source">{prospect.sources || '—'}</DetailRow>
+          <DetailRow label="Status">{statusLabel}</DetailRow>
+          <DetailRow label="About Prospect">{prospect.about_prospect || '—'}</DetailRow>
+        </div>
+      </div>
+
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">Assignments & Follow-up</h4>
+        </div>
+        <div className="ext-card-body">
+          <DetailRow label="LH User ID">{prospect.lh_user_id || '—'}</DetailRow>
+          <DetailRow label="Lead Score (LH)">{prospect.lead_score == null ? '—' : prospect.lead_score}</DetailRow>
+          <DetailRow label="Next Follow-up (LH)">{formatPktDate(prospect.next_follow_up_date) || '—'}</DetailRow>
+          <DetailRow label="Last Contacted (LH)">{formatPktDate(prospect.last_contacted_at) || '—'}</DetailRow>
+          <DetailRow label="Lead Score (EM)">{prospect.lead_score_em == null ? '—' : prospect.lead_score_em}</DetailRow>
+          <DetailRow label="Next Follow-up (EM)">{formatPktDate(prospect.next_follow_up_em) || '—'}</DetailRow>
+          <DetailRow label="Last Contacted (EM)">{formatPktDate(prospect.last_contacted_at_em) || '—'}</DetailRow>
+        </div>
+      </div>
+
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">Meta</h4>
+        </div>
+        <div className="ext-card-body">
+          <DetailRow label="Created">{formatPktDate(prospect.created_at) || '—'}</DetailRow>
+          <DetailRow label="Pitched Source">{prospect.pitched_source || '—'}</DetailRow>
+          <DetailRow label="Pitch Description">{prospect.pitch_description || '—'}</DetailRow>
+          <DetailRow label="Pitched Description (EM)">{prospect.pitched_description_em || '—'}</DetailRow>
+          <DetailRow label="Response (LH)">{prospect.response_lh == null ? '—' : prospect.response_lh ? 'Yes' : 'No'}</DetailRow>
+          <DetailRow label="Response (EM)">{prospect.response_em == null ? '—' : prospect.response_em ? 'Yes' : 'No'}</DetailRow>
+        </div>
+      </div>
     </div>
   );
 };
@@ -237,12 +509,13 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error('Failed to save');
+      const updatedProspect = await res.json();
 
       const successText = isLCPhase
         ? 'Saved — follow-up recorded'
         : `Saved — status set to ${getTargetStatus()}`;
       setSaveMsg({ type: 'success', text: successText });
-      if (typeof onUpdated === 'function') onUpdated();
+      if (typeof onUpdated === 'function') onUpdated(updatedProspect);
     } catch (err) {
       setSaveMsg({ type: 'error', text: err.message || 'Error saving' });
     } finally {
@@ -310,6 +583,41 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
       </div>
 
       {/* Contact & company info */}
+      {(prospect.website_link || prospect.linkedin_url || prospect.intent_proof_link) && (
+        <div className="ext-card overflow-hidden">
+          <div className="ext-card-body py-2.5">
+            <div className="flex flex-wrap gap-2">
+              {prospect.website_link && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.website_link}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Website
+                </ProspectExternalLink>
+              )}
+              {prospect.linkedin_url && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.linkedin_url}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  LinkedIn
+                </ProspectExternalLink>
+              )}
+              {prospect.intent_proof_link && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.intent_proof_link}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Intent Proof
+                </ProspectExternalLink>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="ext-card overflow-hidden">
         <div className="ext-card-header">
           <h4 className="ext-card-header-title">Contact & Company</h4>
@@ -317,7 +625,9 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
         <div className="ext-card-body">
         <DetailRow label="Email">
           {prospect.email && (
-            <a href={`mailto:${prospect.email}`} className="text-primary-600 hover:underline">{prospect.email}</a>
+            <ProspectMailLink prospect={prospect} email={prospect.email} className="text-primary-600 hover:underline">
+              {prospect.email}
+            </ProspectMailLink>
           )}
         </DetailRow>
         <DetailRow label="Company">{prospect.company_name}</DetailRow>
@@ -325,12 +635,16 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
         <DetailRow label="Location">{prospect.location}</DetailRow>
         <DetailRow label="Website">
           {prospect.website_link && (
-            <a href={prospect.website_link} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">{prospect.website_link}</a>
+            <ProspectExternalLink prospect={prospect} href={prospect.website_link} className="text-primary-600 hover:underline truncate block">
+              {prospect.website_link}
+            </ProspectExternalLink>
           )}
         </DetailRow>
         <DetailRow label="LinkedIn">
           {prospect.linkedin_url && (
-            <a href={prospect.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">{prospect.linkedin_url}</a>
+            <ProspectExternalLink prospect={prospect} href={prospect.linkedin_url} className="text-primary-600 hover:underline truncate block">
+              {prospect.linkedin_url}
+            </ProspectExternalLink>
           )}
         </DetailRow>
         </div>
@@ -354,12 +668,27 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
         </DetailRow>
         <DetailRow label="Intent Proof Link">
           {prospect.intent_proof_link && (
-            <a href={prospect.intent_proof_link} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">{prospect.intent_proof_link}</a>
+            <ProspectExternalLink prospect={prospect} href={prospect.intent_proof_link} className="text-primary-600 hover:underline truncate block">
+              {prospect.intent_proof_link}
+            </ProspectExternalLink>
           )}
         </DetailRow>
         <DetailRow label="Intent Date">
-          {prospect.intent_date && new Date(prospect.intent_date).toLocaleDateString()}
+          {formatPktDate(prospect.intent_date)}
         </DetailRow>
+        </div>
+      </div>
+
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">EM (read-only)</h4>
+        </div>
+        <div className="ext-card-body">
+          <DetailRow label="Lead Score (EM)">{prospect.lead_score_em == null ? '—' : prospect.lead_score_em}</DetailRow>
+          <DetailRow label="Pitched Description (EM)">{prospect.pitched_description_em ? prospect.pitched_description_em : '—'}</DetailRow>
+          <DetailRow label="Next Follow-up (EM)">
+            {formatPktDate(prospect.next_follow_up_em) || '—'}
+          </DetailRow>
         </div>
       </div>
 
@@ -556,7 +885,7 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
           <div className="ext-card-body">
           <DetailRow label="Pitch Description">{prospect.pitch_description}</DetailRow>
           <DetailRow label="Pitched Source">{prospect.pitched_source}</DetailRow>
-          <DetailRow label="Pitch Date">{prospect.pitch_date && new Date(prospect.pitch_date).toLocaleDateString()}</DetailRow>
+          <DetailRow label="Pitch Date">{formatPktDate(prospect.pitch_date)}</DetailRow>
           <DetailRow label="Pitch Response">{prospect.pitch_response}</DetailRow>
           </div>
         </div>
@@ -568,9 +897,9 @@ const ProspectDetailCard = ({ prospect, onBack, backLabel, onUpdated }) => {
           <h4 className="ext-card-header-title">Details</h4>
         </div>
         <div className="ext-card-body">
-        <DetailRow label="Created">{prospect.created_at && new Date(prospect.created_at).toLocaleDateString()}</DetailRow>
-        <DetailRow label="Last Contacted">{prospect.last_contacted_at && new Date(prospect.last_contacted_at).toLocaleDateString()}</DetailRow>
-        <DetailRow label="Next Follow-up">{prospect.next_follow_up_date && new Date(prospect.next_follow_up_date).toLocaleDateString()}</DetailRow>
+        <DetailRow label="Created">{formatPktDate(prospect.created_at)}</DetailRow>
+        <DetailRow label="Last Contacted">{formatPktDate(prospect.last_contacted_at)}</DetailRow>
+        <DetailRow label="Next Follow-up">{formatPktDate(prospect.next_follow_up_date)}</DetailRow>
         <DetailRow label="Campaign">{prospect.campaign_name}</DetailRow>
         </div>
       </div>
@@ -600,65 +929,30 @@ const CHART_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4445'];
 const formatSource = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ') : '');
 const formatCategory = (c) => (c === 'Uncategorized' ? c : c.replace(/_/g, '-'));
 
-const DCRDashboardTab = () => {
-  const { userId } = useProspect();
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const fetchAll = useCallback(async () => {
-    if (!userId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_URL}/prospects/user/${userId}`);
-      if (!res.ok) throw new Error('Failed to load prospects');
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
+const DCRDashboardTab = ({ prospects = [], onSyncNow, syncing }) => {
+  const list = Array.isArray(prospects) ? prospects : [];
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfToday = new Date(startOfToday);
+  endOfToday.setDate(endOfToday.getDate() + 1);
+  const startOfWeek = new Date(startOfToday);
+  startOfWeek.setDate(startOfWeek.getDate() - 7);
 
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const endOfToday = new Date(startOfToday);
-      endOfToday.setDate(endOfToday.getDate() + 1);
-      const startOfWeek = new Date(startOfToday);
-      startOfWeek.setDate(startOfWeek.getDate() - 7);
+  const isWithinRange = (dateVal, start, end) => {
+    if (!dateVal) return false;
+    const d = new Date(dateVal);
+    if (Number.isNaN(d.getTime())) return false;
+    return d >= start && d < end;
+  };
 
-      const isWithinRange = (dateVal, start, end) => {
-        if (!dateVal) return false;
-        const d = new Date(dateVal);
-        if (Number.isNaN(d.getTime())) return false;
-        return d >= start && d < end;
-      };
-
-      setStats({
-        totalProspects: list.length,
-        todaysProspects: list.filter((p) => isWithinRange(p.created_at, startOfToday, endOfToday)).length,
-        thisWeeksProspects: list.filter((p) => isWithinRange(p.created_at, startOfWeek, endOfToday)).length,
-        newProspects: list.filter((p) => p.status === 'new').length,
-        dataRefinedProspects: list.filter((p) => p.status === 'data_refined').length,
-        assignedToLH: list.filter((p) => !!p.lh_user_id).length,
-      });
-    } catch (err) {
-      setError(err.message || 'Failed to load stats');
-      setStats(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-primary-500" strokeWidth={2} />
-      </div>
-    );
-  }
-  if (error) {
-    return <p className="text-sm text-red-600 py-4">{error}</p>;
-  }
+  const stats = {
+    totalProspects: list.length,
+    todaysProspects: list.filter((p) => isWithinRange(p.created_at, startOfToday, endOfToday)).length,
+    thisWeeksProspects: list.filter((p) => isWithinRange(p.created_at, startOfWeek, endOfToday)).length,
+    newProspects: list.filter((p) => p.status === 'new').length,
+    dataRefinedProspects: list.filter((p) => p.status === 'data_refined').length,
+    assignedToLH: list.filter((p) => !!p.lh_user_id).length,
+  };
 
   const cardCls = 'ext-card ext-card-body';
 
@@ -666,8 +960,8 @@ const DCRDashboardTab = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-800">DC&R Dashboard</h3>
-        <button type="button" onClick={fetchAll} className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 transition-colors">
-          Refresh
+        <button type="button" onClick={onSyncNow} disabled={syncing} className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 transition-colors disabled:opacity-60">
+          {syncing ? 'Syncing…' : 'Sync Now'}
         </button>
       </div>
 
@@ -712,18 +1006,15 @@ const DC_R_TABS = [
   { key: 'dashboard', label: 'Dashboard' },
 ];
 
-const DCRTabsView = ({ onRequestCaptureSelection }) => {
+const DCRTabsView = ({ onRequestCaptureSelection, prospects = [], dataLoading = false, dataError = null, onSyncNow, onUpsertProspect }) => {
   const {
-    activeProspect, startNewProspect, clearProspect, loadProspect, userId,
+    activeProspect, startNewProspect, clearProspect, loadProspect,
     panelActiveTab, setPanelActiveTab, panelEditingFromTab, setPanelEditingFromTab, panelStateLoaded
   } = useProspect();
   const activeTab = panelActiveTab && DC_R_TABS.some((t) => t.key === panelActiveTab) ? panelActiveTab : 'new';
   const setActiveTab = setPanelActiveTab;
   const editingFromTab = panelEditingFromTab;
   const setEditingFromTab = setPanelEditingFromTab;
-  const [prospects, setProspects] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [newTabSearch, setNewTabSearch] = useState('');
   const [newTabCategory, setNewTabCategory] = useState('');
   const [newTabIntentCategory, setNewTabIntentCategory] = useState('');
@@ -742,30 +1033,6 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
       .catch(() => setSkills([]));
   }, []);
 
-  const fetchUserProspects = useCallback(async () => {
-    if (!userId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_URL}/prospects/user/${userId}`);
-      if (!res.ok) throw new Error('Failed to load prospects');
-      const data = await res.json();
-      setProspects(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setError(err.message || 'Error loading prospects');
-      setProspects([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
-
-  // Fetch prospects when switching to any list tab (dashboard fetches its own stats)
-  useEffect(() => {
-    if (activeTab === 'new' || activeTab === 'redefine' || activeTab === 'assigned') {
-      fetchUserProspects();
-    }
-  }, [activeTab, fetchUserProspects]);
-
   // After a successful save: if NOT stay-on-new, activeProspect goes null → switch to Redefine tab.
   // If stay-on-new, activeProspect is reloaded (never null) so we stay on New tab.
   useEffect(() => {
@@ -775,15 +1042,16 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
       wasEditingRef.current = false;
       setEditingFromTab(null);
       setActiveTab('redefine');
-      fetchUserProspects();
     }
-  }, [activeProspect, fetchUserProspects]);
+  }, [activeProspect]);
 
   const stayOnNewAfterSave = activeTab === 'new' || editingFromTab === 'new';
-  const handleSaveSuccess = () => {
-    setEditingFromTab('new');
-    setActiveTab('new');
-    fetchUserProspects();
+  const handleSaveSuccess = (savedProspect) => {
+    if (savedProspect && typeof onUpsertProspect === 'function') onUpsertProspect(savedProspect);
+    if (stayOnNewAfterSave) {
+      setEditingFromTab('new');
+      setActiveTab('new');
+    }
   };
 
   const handleSelectProspect = (p, fromTab) => {
@@ -844,10 +1112,22 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
     return true;
   });
   const redefineProspects = prospects.filter((p) => p.status === 'data_refined' && !p.lh_user_id);
-  const assignedProspects = prospects.filter((p) => p.status === 'data_refined' && !!p.lh_user_id);
+  const assignedProspects = prospects.filter((p) => !!p.lh_user_id);
 
-  // If editing a prospect loaded from a tab list, show the form with a back button
+  // DCR detail rules:
+  // - Assigned tab: read-only detail
+  // - New/Data Refined tabs: editable form
   if (activeProspect && editingFromTab) {
+    if (editingFromTab === 'assigned') {
+      return (
+        <DCRDetailCard
+          prospect={activeProspect}
+          onBack={handleBackToTab}
+          backLabel={`Back to ${DC_R_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}`}
+        />
+      );
+    }
+
     return (
       <div className="space-y-4">
         <button
@@ -858,10 +1138,10 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
           <ArrowLeft className="w-4 h-4" strokeWidth={2} />
           Back to {DC_R_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}
         </button>
-<div className="ext-card ext-card-body py-2.5 flex flex-row items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-sm font-medium text-slate-700">Editing Prospect</span>
-              </div>
+        <div className="ext-card ext-card-body py-2.5 flex flex-row items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-sm font-medium text-slate-700">Editing Prospect</span>
+        </div>
         <ProspectForm
           stayOnNewAfterSave={stayOnNewAfterSave}
           onSaveSuccess={handleSaveSuccess}
@@ -940,7 +1220,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
                     New Prospects ({newProspectsFiltered.length}
                     {newTabSearch.trim() || newTabCategory || newTabIntentCategory || newTabDateFrom || newTabDateTo || newTabSkill ? ` of ${newProspects.length}` : ''})
                   </h3>
-                  <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors shrink-0" title="Refresh">
+                  <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors shrink-0" title="Sync">
                     <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
                   </button>
                 </div>
@@ -1035,8 +1315,8 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
                 </div>
                 <ProspectList
                   prospects={newProspectsFiltered}
-                  loading={loading}
-                  error={error}
+                  loading={dataLoading}
+                  error={dataError}
                   emptyText={
                     (newTabSearch.trim() || newTabCategory || newTabIntentCategory || newTabDateFrom || newTabDateTo || newTabSkill)
                       ? 'No matching prospects.'
@@ -1065,14 +1345,14 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800">Data Refined ({redefineProspects.length})</h3>
-            <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
             prospects={redefineProspects}
-            loading={loading}
-            error={error}
+            loading={dataLoading}
+            error={dataError}
             emptyText="No data-refined prospects pending LH assignment."
             onSelect={(p) => handleSelectProspect(p, 'redefine')}
           />
@@ -1083,14 +1363,14 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800">LH Assigned ({assignedProspects.length})</h3>
-            <button type="button" onClick={fetchUserProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
             prospects={assignedProspects}
-            loading={loading}
-            error={error}
+            loading={dataLoading}
+            error={dataError}
             emptyText="No data-refined prospects with LH assigned yet."
             onSelect={(p) => handleSelectProspect(p, 'assigned')}
           />
@@ -1098,7 +1378,7 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
       )}
 
       {activeTab === 'dashboard' && (
-        <DCRDashboardTab />
+        <DCRDashboardTab prospects={prospects} onSyncNow={onSyncNow} syncing={dataLoading} />
       )}
     </div>
   );
@@ -1107,77 +1387,31 @@ const DCRTabsView = ({ onRequestCaptureSelection }) => {
 // ── LH Dashboard tab (DB aggregation only) ─────────────────────────────
 const formatCategoryLH = (c) => (c === 'Uncategorized' ? c : c.replace(/_/g, '-'));
 
-const LHDashboardTab = () => {
-  const { authToken, userId } = useProspect();
-  const [lhStats, setLhStats] = useState(null);
-  const [lhUserProspects, setLhUserProspects] = useState([]);
+const LHDashboardTab = ({ localProspects = [], onSyncNow, syncing }) => {
+  const lhUserProspects = Array.isArray(localProspects) ? localProspects : [];
   const [categoryChartData, setCategoryChartData] = useState([]);
   const [categoryChartMinLeadScore, setCategoryChartMinLeadScore] = useState('');
-  const [statsLoading, setStatsLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const fetchStats = useCallback(() => {
-    const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
-    setError(null);
-    setStatsLoading(true);
-    if (!userId) {
-      setLhStats(null);
-      setLhUserProspects([]);
-      setStatsLoading(false);
-      return;
-    }
-
-    fetch(`${API_URL}/prospects/lh/${userId}`, { headers })
-      .then(async (r) => {
-        if (!r.ok) throw new Error('Failed to load LH prospects');
-        const data = await r.json();
-        const list = Array.isArray(data) ? data : [];
-        setLhUserProspects(list);
-
-        const now = new Date();
-        const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        const toLocalDateString = (dateVal) => {
-          if (!dateVal) return '';
-          const d = new Date(dateVal);
-          if (Number.isNaN(d.getTime())) return '';
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        };
-
-        // LH dashboard metrics must be scoped to the logged-in LH user's `lh_user_id`.
-        const totalProspectsAllTime = list.length;
-        const assignedProspects = list.filter((p) => p.status === 'data_refined').length;
-        const totalLCProspectsAllTime = list.filter((p) => p.status === 'LC' || p.status === 'B_LC').length;
-        const totalLNCProspectsAllTime = list.filter((p) => p.status === 'LNC' || p.status === 'B_LNC').length;
-        const lcNotPitchedYet = list.filter((p) => (p.status === 'LC' || p.status === 'B_LC') && !p.last_contacted_at).length;
-        const lcTasksToday = list.filter((p) => {
-          const isLcPhase = p.status === 'LC' || p.status === 'B_LC';
-          const followUpLocal = toLocalDateString(p.next_follow_up_date);
-          return isLcPhase && followUpLocal && followUpLocal === todayLocal;
-        }).length;
-        const lncTasksToday = list.filter((p) => {
-          const isLncPhase = p.status === 'LNC' || p.status === 'B_LNC';
-          const followUpLocal = toLocalDateString(p.next_follow_up_date);
-          return isLncPhase && followUpLocal && followUpLocal === todayLocal;
-        }).length;
-        const todaysTasks = lcTasksToday + lncTasksToday;
-
-        setLhStats({
-          totalProspectsAllTime,
-          assignedProspects,
-          totalLCProspectsAllTime,
-          totalLNCProspectsAllTime,
-          lcNotPitchedYet,
-          todaysTasks,
-        });
-      })
-      .catch(() => setError('Failed to load LH stats'))
-      .finally(() => setStatsLoading(false));
-  }, [authToken, userId]);
-
-  useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+  const todayLocal = toPktDayKey(new Date());
+  const lhStats = {
+    totalProspectsAllTime: lhUserProspects.length,
+    assignedProspects: lhUserProspects.filter((p) => p.status === 'data_refined').length,
+    totalLCProspectsAllTime: lhUserProspects.filter((p) => p.status === 'LC' || p.status === 'B_LC').length,
+    totalLNCProspectsAllTime: lhUserProspects.filter((p) => p.status === 'LNC' || p.status === 'B_LNC').length,
+    lcNotPitchedYet: lhUserProspects.filter((p) => (p.status === 'LC' || p.status === 'B_LC') && !p.last_contacted_at).length,
+    todaysTasks: lhUserProspects.filter((p) => {
+      const followUpLocal = toPktDayKey(p.next_follow_up_date);
+      return !!followUpLocal && followUpLocal === todayLocal && (
+        p.status === 'LC' || p.status === 'B_LC' || p.status === 'LNC' || p.status === 'B_LNC'
+      );
+    }).length,
+    overdueTasks: lhUserProspects.filter((p) => {
+      const followUpLocal = toPktDayKey(p.next_follow_up_date);
+      return !!followUpLocal && followUpLocal < todayLocal && (
+        p.status === 'LC' || p.status === 'B_LC' || p.status === 'LNC' || p.status === 'B_LNC'
+      );
+    }).length,
+  };
 
   useEffect(() => {
     setChartLoading(true);
@@ -1220,32 +1454,14 @@ const LHDashboardTab = () => {
     }
   }, [categoryChartMinLeadScore, lhUserProspects]);
 
-  if (statsLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-primary-500" strokeWidth={2} />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="space-y-3">
-        <p className="text-sm text-red-600">{error}</p>
-        <button type="button" onClick={fetchStats} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white hover:bg-primary-700">
-          Retry
-        </button>
-      </div>
-    );
-  }
-
   const cardCls = 'ext-card ext-card-body';
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-bold text-slate-800">Dashboard</h3>
-        <button type="button" onClick={fetchStats} className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 transition-colors">
-          Refresh
+        <button type="button" onClick={onSyncNow} disabled={syncing} className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 transition-colors disabled:opacity-60">
+          {syncing ? 'Syncing…' : 'Sync Now'}
         </button>
       </div>
 
@@ -1272,6 +1488,10 @@ const LHDashboardTab = () => {
           <div className={cardCls}>
             <p className="text-[11px] font-medium text-slate-500">Today&apos;s Tasks</p>
             <p className="text-xl font-bold text-primary-600 mt-0.5">{lhStats?.todaysTasks ?? '—'}</p>
+          </div>
+          <div className={cardCls}>
+            <p className="text-[11px] font-medium text-slate-500">Overdue Tasks</p>
+            <p className="text-xl font-bold text-red-600 mt-0.5">{lhStats?.overdueTasks ?? '—'}</p>
           </div>
           <div className={cardCls}>
             <p className="text-[11px] font-medium text-slate-500">LC Not Pitched Yet</p>
@@ -1338,25 +1558,9 @@ const LH_TABS = [
 ];
 
 const LH_CATEGORIES = ['Entrepreneur', 'Subcontractor', 'SME', 'HR', 'C_Level'];
-const LH_LEAD_SCORE_OPTIONS = [
-  { value: '', label: 'Any' },
-  { value: '0-2', label: '0–2' },
-  { value: '3-5', label: '3–5' },
-  { value: '6-7', label: '6–7' },
-  { value: '8-10', label: '8–10' },
-  { value: 'no_score', label: 'No score' },
-];
 const LH_PITCH_STATUS_OPTIONS = [
   { value: '', label: 'All' },
   { value: 'not_pitched', label: 'Not pitched yet' },
-];
-const EM_LEAD_SCORE_OPTIONS = [
-  { value: '', label: 'Any' },
-  { value: '0-2', label: '0–2' },
-  { value: '3-5', label: '3–5' },
-  { value: '6-7', label: '6–7' },
-  { value: '8-10', label: '8–10' },
-  { value: 'no_score', label: 'No score' },
 ];
 const EM_LAST_CONTACTED_OPTIONS = [
   { value: '', label: 'All' },
@@ -1408,16 +1612,12 @@ const applyLHFilters = (list, { search, category, skill, leadScore }, skills) =>
       const selectedName = skills.find((s) => s.id === skill)?.name || skill;
       if (!skillNames.some((s) => (s || '').toLowerCase() === (selectedName || '').toLowerCase())) return false;
     }
-    if (leadScore) {
-      const ls = p.lead_score;
-      if (leadScore === 'no_score') {
-        if (ls != null && ls !== '') return false;
-      } else {
-        const [min, max] = leadScore.split('-').map(Number);
-        const nOutOf10 = ls == null ? null : Number(ls);
-        if (nOutOf10 == null || Number.isNaN(nOutOf10)) return false;
-        if (nOutOf10 < min || nOutOf10 > max) return false;
-      }
+    if ((leadScore || '').trim() !== '') {
+      const min = Number(leadScore);
+      if (Number.isNaN(min)) return false;
+      const nOutOf10 = p.lead_score == null ? null : Number(p.lead_score);
+      if (nOutOf10 == null || Number.isNaN(nOutOf10)) return false;
+      if (nOutOf10 < min) return false;
     }
     return true;
   });
@@ -1446,38 +1646,32 @@ const applyEMFilters = (list, { search, skill, leadScore }, skills) => {
       const selectedName = skills.find((s) => s.id === skill)?.name || skill;
       if (!skillNames.some((s) => (s || '').toLowerCase() === (selectedName || '').toLowerCase())) return false;
     }
-    if (leadScore) {
-      const ls = p.lead_score_em;
-      if (leadScore === 'no_score') {
-        if (ls != null && ls !== '') return false;
-      } else {
-        const [min, max] = leadScore.split('-').map(Number);
-        const n = ls == null ? null : Number(ls);
-        if (n == null || Number.isNaN(n)) return false;
-        if (n < min || n > max) return false;
-      }
+    if ((leadScore || '').trim() !== '') {
+      const min = Number(leadScore);
+      if (Number.isNaN(min)) return false;
+      const n = p.lead_score_em == null ? null : Number(p.lead_score_em);
+      if (n == null || Number.isNaN(n)) return false;
+      if (n < min) return false;
     }
     return true;
   });
 };
 
-const LHTabsView = () => {
+const LHTabsView = ({ prospects = [], dataLoading = false, dataError = null, onSyncNow, onUpsertProspect }) => {
   const {
-    activeProspect, clearProspect, loadProspect, userId,
+    activeProspect, clearProspect, loadProspect,
     panelActiveTab, setPanelActiveTab, panelEditingFromTab, setPanelEditingFromTab, panelStateLoaded
   } = useProspect();
   const activeTab = panelActiveTab && LH_TABS.some((t) => t.key === panelActiveTab) ? panelActiveTab : 'assigned';
   const setActiveTab = setPanelActiveTab;
   const editingFromTab = panelEditingFromTab;
   const setEditingFromTab = setPanelEditingFromTab;
-  const [prospects, setProspects] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [lhSearch, setLhSearch] = useState('');
   const [lhCategory, setLhCategory] = useState('');
   const [lhSkill, setLhSkill] = useState('');
   const [lhLeadScore, setLhLeadScore] = useState('');
   const [lhPitchStatus, setLhPitchStatus] = useState('');
+  const [lhTaskSort, setLhTaskSort] = useState('overdue_first');
   const [filtersExpanded, setFiltersExpanded] = useState(true);
   const [skills, setSkills] = useState([]);
   const wasEditingRef = React.useRef(false);
@@ -1489,36 +1683,6 @@ const LHTabsView = () => {
       .catch(() => setSkills([]));
   }, []);
 
-  const fetchLHProspects = useCallback(async (overrideTab) => {
-    const tab = overrideTab ?? activeTab;
-    // LH view must only show prospects linked to the logged-in LH user.
-    if (!userId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      let url;
-      // Always scope data by lh_user_id, then the existing status filters
-      // decide whether it shows up in LNC/LC/Assigned/Task tabs.
-      url = `${API_URL}/prospects/lh/${userId}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Failed to load prospects');
-      const data = await res.json();
-      setProspects(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setError(err.message || 'Error loading prospects');
-      setProspects([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId, activeTab]);
-
-  // Fetch when switching to list tabs (including task); dashboard fetches its own stats
-  useEffect(() => {
-    if (['assigned', 'lnc', 'lc', 'task'].includes(activeTab)) {
-      fetchLHProspects();
-    }
-  }, [activeTab, fetchLHProspects]);
-
   // After save, refresh and go to assigned tab
   useEffect(() => {
     if (activeProspect) {
@@ -1527,9 +1691,8 @@ const LHTabsView = () => {
       wasEditingRef.current = false;
       setEditingFromTab(null);
       setActiveTab('assigned');
-      fetchLHProspects('assigned');
     }
-  }, [activeProspect, fetchLHProspects]);
+  }, [activeProspect]);
 
   const handleSelectProspect = (p, fromTab) => {
     loadProspect(p);
@@ -1547,18 +1710,12 @@ const LHTabsView = () => {
   const lncProspects = prospects.filter((p) => p.status === 'LNC' || p.status === 'B_LNC');
   const lcProspects = prospects.filter((p) => p.status === 'LC' || p.status === 'B_LC');
 
-  // Task tab: prospects whose next_follow_up_date is today (use local date to avoid timezone bugs)
-  const now = new Date();
-  const todayLocal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const toLocalDateString = (dateVal) => {
-    if (!dateVal) return '';
-    const d = new Date(dateVal);
-    if (Number.isNaN(d.getTime())) return '';
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  };
+  // Task tab: prospects with follow-up date today or overdue (null excluded)
+  const todayLocal = toPktDayKey(new Date());
   const taskProspects = prospects.filter((p) => {
-    const followUpLocal = toLocalDateString(p.next_follow_up_date);
-    return followUpLocal && followUpLocal === todayLocal;
+    const followUpLocal = toPktDayKey(p.next_follow_up_date);
+    if (!followUpLocal) return false;
+    return followUpLocal <= todayLocal;
   });
 
   const lhFilters = { search: lhSearch, category: lhCategory, skill: lhSkill, leadScore: lhLeadScore };
@@ -1570,7 +1727,13 @@ const LHTabsView = () => {
   const lcProspectsFiltered = lhPitchStatus === 'not_pitched'
     ? lcProspectsFilteredBase.filter((p) => !p.last_contacted_at)
     : lcProspectsFilteredBase;
-  const taskProspectsFiltered = applyLHFilters(taskProspects, lhFilters, skills);
+  const taskProspectsFilteredBase = applyLHFilters(taskProspects, lhFilters, skills);
+  const taskProspectsFiltered = [...taskProspectsFilteredBase].sort((a, b) => {
+    const aOverdue = getOverdueDays(a.next_follow_up_date);
+    const bOverdue = getOverdueDays(b.next_follow_up_date);
+    if (lhTaskSort === 'today_first') return aOverdue - bOverdue;
+    return bOverdue - aOverdue; // default overdue first
+  });
 
   // If viewing a prospect detail from a tab
   if (activeProspect && editingFromTab) {
@@ -1579,7 +1742,7 @@ const LHTabsView = () => {
         prospect={activeProspect}
         onBack={handleBackToTab}
         backLabel={`Back to ${LH_TABS.find((t) => t.key === editingFromTab)?.label || 'list'}`}
-        onUpdated={fetchLHProspects}
+        onUpdated={onUpsertProspect}
       />
     );
   }
@@ -1658,16 +1821,17 @@ const LHTabsView = () => {
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
-              <select
+              <input
+                type="number"
+                min="0"
+                max="10"
+                step="1"
                 value={lhLeadScore}
                 onChange={(e) => setLhLeadScore(e.target.value)}
+                placeholder="Min lead score"
                 className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
-                title="Lead Score"
-              >
-                {LH_LEAD_SCORE_OPTIONS.map((o) => (
-                  <option key={o.value || 'any'} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+                title="Lead Score (minimum)"
+              />
               {activeTab === 'lc' && (
                 <select
                   value={lhPitchStatus}
@@ -1678,6 +1842,17 @@ const LHTabsView = () => {
                   {LH_PITCH_STATUS_OPTIONS.map((o) => (
                     <option key={o.value || 'all'} value={o.value}>{o.label}</option>
                   ))}
+                </select>
+              )}
+              {activeTab === 'task' && (
+                <select
+                  value={lhTaskSort}
+                  onChange={(e) => setLhTaskSort(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                  title="Task Sort"
+                >
+                  <option value="overdue_first">Overdue first</option>
+                  <option value="today_first">Today first</option>
                 </select>
               )}
             </div>
@@ -1692,14 +1867,14 @@ const LHTabsView = () => {
             <h3 className="text-sm font-bold text-slate-800">
               Assigned ({assignedProspectsFiltered.length}{hasLhFilters ? ` of ${assignedProspects.length}` : ''})
             </h3>
-            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
             prospects={assignedProspectsFiltered}
-            loading={loading}
-            error={error}
+            loading={dataLoading}
+            error={dataError}
             emptyText={hasLhFilters ? 'No matching prospects.' : 'No prospects assigned to you yet.'}
             onSelect={(p) => handleSelectProspect(p, 'assigned')}
           />
@@ -1713,14 +1888,14 @@ const LHTabsView = () => {
             <h3 className="text-sm font-bold text-slate-800">
               LNC ({lncProspectsFiltered.length}{hasLhFilters ? ` of ${lncProspects.length}` : ''})
             </h3>
-            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
             prospects={lncProspectsFiltered}
-            loading={loading}
-            error={error}
+            loading={dataLoading}
+            error={dataError}
             emptyText={hasLhFilters ? 'No matching prospects.' : 'No prospects in LNC status.'}
             onSelect={(p) => handleSelectProspect(p, 'lnc')}
           />
@@ -1734,14 +1909,14 @@ const LHTabsView = () => {
             <h3 className="text-sm font-bold text-slate-800">
               LC ({lcProspectsFiltered.length}{hasLhFilters ? ` of ${lcProspects.length}` : ''})
             </h3>
-            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
             prospects={lcProspectsFiltered}
-            loading={loading}
-            error={error}
+            loading={dataLoading}
+            error={dataError}
             emptyText={hasLhFilters ? 'No matching prospects.' : 'No prospects in LC status.'}
             onSelect={(p) => handleSelectProspect(p, 'lc')}
           />
@@ -1753,17 +1928,21 @@ const LHTabsView = () => {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800">
-              Today&apos;s Follow-ups ({taskProspectsFiltered.length}{hasLhFilters ? ` of ${taskProspects.length}` : ''})
+              Due Follow-ups ({taskProspectsFiltered.length}{hasLhFilters ? ` of ${taskProspects.length}` : ''})
             </h3>
-            <button type="button" onClick={fetchLHProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
           <ProspectList
             prospects={taskProspectsFiltered}
-            loading={loading}
-            error={error}
-            emptyText={hasLhFilters ? 'No matching prospects.' : "No follow-ups scheduled for today."}
+            loading={dataLoading}
+            error={dataError}
+            emptyText={hasLhFilters ? 'No matching prospects.' : "No due follow-ups."}
+            getDueLabel={(p) => {
+              const overdueDays = getOverdueDays(p.next_follow_up_date);
+              return overdueDays > 0 ? `Due by ${overdueDays} day${overdueDays > 1 ? 's' : ''}` : null;
+            }}
             onSelect={(p) => handleSelectProspect(p, 'task')}
           />
         </div>
@@ -1771,7 +1950,7 @@ const LHTabsView = () => {
 
       {/* Dashboard tab */}
       {activeTab === 'dashboard' && (
-        <LHDashboardTab />
+        <LHDashboardTab localProspects={prospects} onSyncNow={onSyncNow} syncing={dataLoading} />
       )}
     </div>
   );
@@ -1828,8 +2007,9 @@ const EMDetailCard = ({ prospect, detailTab, onBack, backLabel, onUpdated }) => 
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error('Failed to save');
+      const updatedProspect = await res.json();
       setSaveMsg({ type: 'success', text: 'Saved' });
-      if (typeof onUpdated === 'function') onUpdated();
+      if (typeof onUpdated === 'function') onUpdated(updatedProspect);
     } catch (err) {
       setSaveMsg({ type: 'error', text: err.message || 'Error saving' });
     } finally {
@@ -1853,29 +2033,65 @@ const EMDetailCard = ({ prospect, detailTab, onBack, backLabel, onUpdated }) => 
         <p className="text-sm text-slate-500">{prospect.company_name || '—'}</p>
       </div>
 
+      {(prospect.website_link || prospect.linkedin_url || prospect.intent_proof_link) && (
+        <div className="ext-card overflow-hidden">
+          <div className="ext-card-body py-2.5">
+            <div className="flex flex-wrap gap-2">
+              {prospect.website_link && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.website_link}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Website
+                </ProspectExternalLink>
+              )}
+              {prospect.linkedin_url && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.linkedin_url}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  LinkedIn
+                </ProspectExternalLink>
+              )}
+              {prospect.intent_proof_link && (
+                <ProspectExternalLink
+                  prospect={prospect}
+                  href={prospect.intent_proof_link}
+                  className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Intent Proof
+                </ProspectExternalLink>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="ext-card overflow-hidden">
         <div className="ext-card-header"><h4 className="ext-card-header-title">Basic Info</h4></div>
         <div className="ext-card-body">
           <DetailRow label="Email">{prospect.email || '—'}</DetailRow>
           <DetailRow label="Website">
             {prospect.website_link && (
-              <a href={prospect.website_link.startsWith('http') ? prospect.website_link : `https://${prospect.website_link}`} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">
+              <ProspectExternalLink prospect={prospect} href={prospect.website_link} className="text-primary-600 hover:underline truncate block">
                 {prospect.website_link}
-              </a>
+              </ProspectExternalLink>
             )}
           </DetailRow>
           <DetailRow label="LinkedIn">
             {prospect.linkedin_url && (
-              <a href={prospect.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">
+              <ProspectExternalLink prospect={prospect} href={prospect.linkedin_url} className="text-primary-600 hover:underline truncate block">
                 {prospect.linkedin_url}
-              </a>
+              </ProspectExternalLink>
             )}
           </DetailRow>
           <DetailRow label="Intent Proof Link">
             {prospect.intent_proof_link && (
-              <a href={prospect.intent_proof_link} target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline truncate block">
+              <ProspectExternalLink prospect={prospect} href={prospect.intent_proof_link} className="text-primary-600 hover:underline truncate block">
                 {prospect.intent_proof_link}
-              </a>
+              </ProspectExternalLink>
             )}
           </DetailRow>
           <DetailRow label="Intent Skills">
@@ -1885,7 +2101,20 @@ const EMDetailCard = ({ prospect, detailTab, onBack, backLabel, onUpdated }) => 
           <DetailRow label="Intent Category">{prospect.intent_category || '—'}</DetailRow>
           <DetailRow label="Status">{prospect.status || '—'}</DetailRow>
           <DetailRow label="Source">{prospect.sources || '—'}</DetailRow>
-          <DetailRow label="Last Contacted (EM)">{prospect.last_contacted_at_em && new Date(prospect.last_contacted_at_em).toLocaleDateString()}</DetailRow>
+          <DetailRow label="Last Contacted (EM)">{formatPktDate(prospect.last_contacted_at_em)}</DetailRow>
+        </div>
+      </div>
+
+      <div className="ext-card overflow-hidden">
+        <div className="ext-card-header">
+          <h4 className="ext-card-header-title">LH (read-only)</h4>
+        </div>
+        <div className="ext-card-body">
+          <DetailRow label="Lead Score (LH)">{prospect.lead_score == null ? '—' : prospect.lead_score}</DetailRow>
+          <DetailRow label="Pitch Description (LH)">{prospect.pitch_description ? prospect.pitch_description : '—'}</DetailRow>
+          <DetailRow label="Next Follow-up (LH)">
+            {formatPktDate(prospect.next_follow_up_date) || '—'}
+          </DetailRow>
         </div>
       </div>
 
@@ -2012,41 +2241,19 @@ const EM_TABS = [
   { key: 'dashboard', label: 'Dashboard' },
 ];
 
-const EMTabsView = () => {
+const EMTabsView = ({ prospects = [], dataLoading = false, dataError = null, onSyncNow, onUpsertProspect }) => {
   const {
     activeProspect, clearProspect, loadProspect, authUser,
     panelActiveTab, setPanelActiveTab, panelEditingFromTab, setPanelEditingFromTab,
   } = useProspect();
   const activeTab = panelActiveTab && EM_TABS.some((t) => t.key === panelActiveTab) ? panelActiveTab : 'nhe';
-  const [prospects, setProspects] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [emSearch, setEmSearch] = useState('');
   const [emSkill, setEmSkill] = useState('');
   const [emLeadScore, setEmLeadScore] = useState('');
   const [emHeLastContacted, setEmHeLastContacted] = useState('');
+  const [emTaskSort, setEmTaskSort] = useState('overdue_first');
   const [emFiltersExpanded, setEmFiltersExpanded] = useState(true);
   const [skills, setSkills] = useState([]);
-
-  const fetchEMProspects = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_URL}/prospects`);
-      if (!res.ok) throw new Error('Failed to load prospects');
-      const data = await res.json();
-      setProspects(Array.isArray(data) ? data : []);
-    } catch (err) {
-      setError(err.message || 'Error loading prospects');
-      setProspects([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (['nhe', 'he', 'task'].includes(activeTab)) fetchEMProspects();
-  }, [activeTab, fetchEMProspects]);
 
   useEffect(() => {
     fetch(`${API_URL}/skills`)
@@ -2059,17 +2266,23 @@ const EMTabsView = () => {
   const categoryMatched = prospects.filter((p) => matchesEMPreference(p, emType));
   const nheProspectsBase = categoryMatched.filter((p) => !hasEmailValue(p.email));
   const heProspectsBase = categoryMatched.filter((p) => hasEmailValue(p.email));
-  const todayLocal = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  })();
+  const todayLocal = toPktDayKey(new Date());
   const tasksProspectsBase = categoryMatched.filter((p) => {
     if (!p.next_follow_up_em) return false;
-    const d = new Date(p.next_follow_up_em);
-    if (Number.isNaN(d.getTime())) return false;
-    const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return local === todayLocal;
+    const local = toPktDayKey(p.next_follow_up_em);
+    if (!local) return false;
+    return local <= todayLocal;
   });
+  const emTodayTasksCount = tasksProspectsBase.filter((p) => {
+    const local = toPktDayKey(p.next_follow_up_em);
+    if (!local) return false;
+    return local === todayLocal;
+  }).length;
+  const emOverdueTasksCount = tasksProspectsBase.filter((p) => {
+    const local = toPktDayKey(p.next_follow_up_em);
+    if (!local) return false;
+    return local < todayLocal;
+  }).length;
   const emFilters = { search: emSearch, skill: emSkill, leadScore: emLeadScore };
   const hasEmFilters = !!(emSearch.trim() || emSkill || emLeadScore || (activeTab === 'he' && emHeLastContacted));
   const nheProspects = applyEMFilters(nheProspectsBase, emFilters, skills);
@@ -2079,7 +2292,12 @@ const EMTabsView = () => {
     : emHeLastContacted === 'not_contacted'
       ? heProspectsFilteredBase.filter((p) => !p.last_contacted_at_em)
       : heProspectsFilteredBase;
-  const tasksProspects = applyEMFilters(tasksProspectsBase, emFilters, skills);
+  const tasksProspects = applyEMFilters(tasksProspectsBase, emFilters, skills).sort((a, b) => {
+    const aOverdue = getOverdueDays(a.next_follow_up_em);
+    const bOverdue = getOverdueDays(b.next_follow_up_em);
+    if (emTaskSort === 'today_first') return aOverdue - bOverdue;
+    return bOverdue - aOverdue;
+  });
   const pitchedCount = categoryMatched.filter((p) => !!p.last_contacted_at_em).length;
 
   const handleSelectProspect = (p, fromTab) => {
@@ -2097,7 +2315,7 @@ const EMTabsView = () => {
           setPanelEditingFromTab(null);
         }}
         backLabel={`Back to ${EM_TABS.find((t) => t.key === panelEditingFromTab)?.label || 'list'}`}
-        onUpdated={fetchEMProspects}
+        onUpdated={onUpsertProspect}
       />
     );
   }
@@ -2166,16 +2384,17 @@ const EMTabsView = () => {
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
-              <select
+              <input
+                type="number"
+                min="0"
+                max="10"
+                step="1"
                 value={emLeadScore}
                 onChange={(e) => setEmLeadScore(e.target.value)}
+                placeholder="Min lead score"
                 className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
-                title="Lead Score (EM)"
-              >
-                {EM_LEAD_SCORE_OPTIONS.map((o) => (
-                  <option key={o.value || 'any'} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+                title="Lead Score (minimum)"
+              />
               {activeTab === 'he' && (
                 <select
                   value={emHeLastContacted}
@@ -2186,6 +2405,17 @@ const EMTabsView = () => {
                   {EM_LAST_CONTACTED_OPTIONS.map((o) => (
                     <option key={o.value || 'all'} value={o.value}>{o.label}</option>
                   ))}
+                </select>
+              )}
+              {activeTab === 'task' && (
+                <select
+                  value={emTaskSort}
+                  onChange={(e) => setEmTaskSort(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white py-2 px-2.5 text-sm text-slate-800 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0"
+                  title="Task Sort"
+                >
+                  <option value="overdue_first">Overdue first</option>
+                  <option value="today_first">Today first</option>
                 </select>
               )}
             </div>
@@ -2199,11 +2429,11 @@ const EMTabsView = () => {
             <h3 className="text-sm font-bold text-slate-800">
               NHE ({nheProspects.length}{hasEmFilters ? ` of ${nheProspectsBase.length}` : ''})
             </h3>
-            <button type="button" onClick={fetchEMProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
-          <ProspectList prospects={nheProspects} loading={loading} error={error} emptyText={hasEmFilters ? 'No matching prospects.' : 'No prospects without email.'} onSelect={(p) => handleSelectProspect(p, 'nhe')} />
+          <ProspectList prospects={nheProspects} loading={dataLoading} error={dataError} emptyText={hasEmFilters ? 'No matching prospects.' : 'No prospects without email.'} onSelect={(p) => handleSelectProspect(p, 'nhe')} />
         </div>
       )}
 
@@ -2213,11 +2443,11 @@ const EMTabsView = () => {
             <h3 className="text-sm font-bold text-slate-800">
               HE ({heProspects.length}{hasEmFilters ? ` of ${heProspectsBase.length}` : ''})
             </h3>
-            <button type="button" onClick={fetchEMProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
-          <ProspectList prospects={heProspects} loading={loading} error={error} emptyText={hasEmFilters ? 'No matching prospects.' : 'No prospects with email.'} onSelect={(p) => handleSelectProspect(p, 'he')} />
+          <ProspectList prospects={heProspects} loading={dataLoading} error={dataError} emptyText={hasEmFilters ? 'No matching prospects.' : 'No prospects with email.'} onSelect={(p) => handleSelectProspect(p, 'he')} />
         </div>
       )}
 
@@ -2225,13 +2455,23 @@ const EMTabsView = () => {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-800">
-              Today&apos;s Tasks ({tasksProspects.length}{hasEmFilters ? ` of ${tasksProspectsBase.length}` : ''})
+              Due Tasks ({tasksProspects.length}{hasEmFilters ? ` of ${tasksProspectsBase.length}` : ''})
             </h3>
-            <button type="button" onClick={fetchEMProspects} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Refresh">
+            <button type="button" onClick={onSyncNow} className="p-1.5 rounded-md hover:bg-slate-200 transition-colors" title="Sync">
               <RefreshCw className="w-3.5 h-3.5 text-slate-500" strokeWidth={2} />
             </button>
           </div>
-          <ProspectList prospects={tasksProspects} loading={loading} error={error} emptyText={hasEmFilters ? 'No matching prospects.' : 'No follow-ups scheduled for today.'} onSelect={(p) => handleSelectProspect(p, 'task')} />
+          <ProspectList
+            prospects={tasksProspects}
+            loading={dataLoading}
+            error={dataError}
+            emptyText={hasEmFilters ? 'No matching prospects.' : 'No due follow-ups.'}
+            getDueLabel={(p) => {
+              const overdueDays = getOverdueDays(p.next_follow_up_em);
+              return overdueDays > 0 ? `Due by ${overdueDays} day${overdueDays > 1 ? 's' : ''}` : null;
+            }}
+            onSelect={(p) => handleSelectProspect(p, 'task')}
+          />
         </div>
       )}
 
@@ -2249,6 +2489,14 @@ const EMTabsView = () => {
             <p className="text-[11px] font-medium text-slate-500">Total pitched prospects</p>
             <p className="text-xl font-bold text-primary-600 mt-0.5">{pitchedCount}</p>
           </div>
+          <div className="ext-card ext-card-body">
+            <p className="text-[11px] font-medium text-slate-500">Today&apos;s Tasks</p>
+            <p className="text-xl font-bold text-primary-600 mt-0.5">{emTodayTasksCount}</p>
+          </div>
+          <div className="ext-card ext-card-body">
+            <p className="text-[11px] font-medium text-slate-500">Overdue Tasks</p>
+            <p className="text-xl font-bold text-red-600 mt-0.5">{emOverdueTasksCount}</p>
+          </div>
         </div>
       )}
     </div>
@@ -2256,32 +2504,10 @@ const EMTabsView = () => {
 };
 
 // ── Default view for non-DC_R/LH roles ──────────────────────────────
-const DefaultView = ({ onRequestCaptureSelection }) => {
+const DefaultView = ({ onRequestCaptureSelection, prospects = [], dataLoading = false, dataError = null, onSyncNow }) => {
   const { activeProspect, startNewProspect, clearProspect, loadProspect } = useProspect();
   const [viewMode, setViewMode] = useState('home'); // 'home' | 'prospects'
   const [fromProspectsList, setFromProspectsList] = useState(false);
-  const [prospects, setProspects] = useState([]);
-  const [prospectsLoading, setProspectsLoading] = useState(false);
-  const [prospectsError, setProspectsError] = useState(null);
-
-  useEffect(() => {
-    if (viewMode !== 'prospects') return;
-    setProspectsLoading(true);
-    setProspectsError(null);
-    fetch(`${API_URL}/prospects`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to load prospects');
-        return res.json();
-      })
-      .then((data) => {
-        setProspects(Array.isArray(data) ? data : []);
-      })
-      .catch((err) => {
-        setProspectsError(err.message || 'Error loading prospects');
-        setProspects([]);
-      })
-      .finally(() => setProspectsLoading(false));
-  }, [viewMode]);
 
   if (viewMode === 'prospects') {
     return (
@@ -2299,10 +2525,13 @@ const DefaultView = ({ onRequestCaptureSelection }) => {
           Back
         </button>
         <h3 className="text-base font-bold text-slate-800">All prospects</h3>
+        <button type="button" onClick={onSyncNow} className="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700 transition-colors">
+          Sync Now
+        </button>
         <ProspectList
           prospects={prospects}
-          loading={prospectsLoading}
-          error={prospectsError}
+          loading={dataLoading}
+          error={dataError}
           emptyText="No prospects saved yet."
           onSelect={(p) => {
             loadProspect(p);
@@ -2385,12 +2614,80 @@ const DefaultView = ({ onRequestCaptureSelection }) => {
 
 // ── Main OverlayPanel ───────────────────────────────────────────────
 const OverlayPanel = ({ onRequestCaptureSelection }) => {
-  const { isCollapsed, setIsCollapsed, reloadDraftFromStorage, authUser, logout } = useProspect();
+  const { isCollapsed, setIsCollapsed, reloadDraftFromStorage, authUser, logout, userId } = useProspect();
   const [panelView, setPanelView] = React.useState('main'); // 'main' | 'settings'
+  const [cachedProspects, setCachedProspects] = useState([]);
+  const [cacheLoading, setCacheLoading] = useState(true);
+  const [cacheError, setCacheError] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [cacheReady, setCacheReady] = useState(false);
 
   const isDCR = authUser?.role === 'DC_R';
   const isLH = authUser?.role === 'LH';
   const isEM = authUser?.role === 'EM';
+
+  const loadCacheFromIndexedDb = useCallback(async () => {
+    setCacheLoading(true);
+    setCacheError(null);
+    try {
+      const [localProspects, localLastSync] = await Promise.all([
+        getAllProspectsFromDb(),
+        getMetaValue(LAST_SYNC_META_KEY),
+      ]);
+      setCachedProspects(Array.isArray(localProspects) ? localProspects : []);
+      setLastSyncedAt(typeof localLastSync === 'string' ? localLastSync : null);
+    } catch (err) {
+      setCacheError(err?.message || 'Failed to load local cache');
+      setCachedProspects([]);
+    } finally {
+      setCacheLoading(false);
+      setCacheReady(true);
+    }
+  }, []);
+
+  const syncProspectsNow = useCallback(async () => {
+    if (!authUser?.role) return;
+    setIsSyncing(true);
+    setCacheError(null);
+    try {
+      const endpoint = getProspectSyncEndpoint(authUser.role, userId);
+      const res = await fetch(endpoint);
+      if (!res.ok) throw new Error('Failed to sync prospects');
+      const list = await res.json();
+      const normalized = Array.isArray(list) ? list : [];
+      await replaceAllProspectsInDb(normalized);
+      const nowIso = new Date().toISOString();
+      await setMetaValue(LAST_SYNC_META_KEY, nowIso);
+      setCachedProspects(normalized);
+      setLastSyncedAt(nowIso);
+    } catch (err) {
+      setCacheError(err?.message || 'Sync failed');
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [authUser, userId]);
+
+  const upsertLocalProspect = useCallback(async (prospect) => {
+    if (!prospect || !prospect.id) return;
+    try {
+      await upsertProspectInDb(prospect);
+      setCachedProspects((prev) => upsertProspectInList(prev, prospect));
+    } catch (err) {
+      setCacheError(err?.message || 'Failed to update local cache');
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCacheFromIndexedDb();
+  }, [loadCacheFromIndexedDb]);
+
+  useEffect(() => {
+    if (!cacheReady || !authUser?.role) return;
+    const neverSynced = !lastSyncedAt;
+    const stale = !neverSynced && (Date.now() - new Date(lastSyncedAt).getTime() > SYNC_THRESHOLD_MS);
+    if (neverSynced || stale) syncProspectsNow();
+  }, [cacheReady, authUser, lastSyncedAt, syncProspectsNow]);
 
   // Notify parent (content script) so it can hide iframe and show transparent tab when collapsed
   React.useEffect(() => {
@@ -2439,6 +2736,15 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
                 >
                   <RefreshCw className="w-4 h-4" strokeWidth={2} />
                 </button>
+                <button
+                  type="button"
+                  onClick={syncProspectsNow}
+                  title={isSyncing ? 'Syncing prospects...' : 'Sync prospects now'}
+                  disabled={isSyncing}
+                  className="p-2 rounded-lg hover:bg-white/20 transition-colors disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} strokeWidth={2} />
+                </button>
                 {typeof onRequestCaptureSelection === 'function' && (
                   <button
                     type="button"
@@ -2467,13 +2773,38 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
               {panelView === 'settings' ? (
                 <SettingsPage onBack={() => setPanelView('main')} />
               ) : isDCR ? (
-                <DCRTabsView onRequestCaptureSelection={onRequestCaptureSelection} />
+                <DCRTabsView
+                  onRequestCaptureSelection={onRequestCaptureSelection}
+                  prospects={cachedProspects}
+                  dataLoading={cacheLoading || isSyncing}
+                  dataError={cacheError}
+                  onSyncNow={syncProspectsNow}
+                  onUpsertProspect={upsertLocalProspect}
+                />
               ) : isLH ? (
-                <LHTabsView />
+                <LHTabsView
+                  prospects={cachedProspects}
+                  dataLoading={cacheLoading || isSyncing}
+                  dataError={cacheError}
+                  onSyncNow={syncProspectsNow}
+                  onUpsertProspect={upsertLocalProspect}
+                />
               ) : isEM ? (
-                <EMTabsView />
+                <EMTabsView
+                  prospects={cachedProspects}
+                  dataLoading={cacheLoading || isSyncing}
+                  dataError={cacheError}
+                  onSyncNow={syncProspectsNow}
+                  onUpsertProspect={upsertLocalProspect}
+                />
               ) : (
-                <DefaultView onRequestCaptureSelection={onRequestCaptureSelection} />
+                <DefaultView
+                  onRequestCaptureSelection={onRequestCaptureSelection}
+                  prospects={cachedProspects}
+                  dataLoading={cacheLoading || isSyncing}
+                  dataError={cacheError}
+                  onSyncNow={syncProspectsNow}
+                />
               )}
             </div>
 
@@ -2482,7 +2813,9 @@ const OverlayPanel = ({ onRequestCaptureSelection }) => {
               <div className="flex items-center justify-between gap-2">
                 <div className="flex flex-col text-xs text-slate-500 truncate min-w-0 flex-1">
                   <span className="font-medium text-slate-700 truncate">{authUser?.name || authUser?.email || '—'}</span>
-                  <span className="text-[11px] text-slate-400">{authUser?.role || ''}</span>
+                  <span className="text-[11px] text-slate-400">
+                    {authUser?.role || ''}{lastSyncedAt ? ` • Synced ${new Date(lastSyncedAt).toLocaleTimeString()}` : ' • Not synced yet'}
+                  </span>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
